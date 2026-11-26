@@ -121,77 +121,42 @@ def get_frontend_url(request: Request) -> str:
 
 @app.get("/api/debug/graphql")
 def debug_graphql():
-    if not twitter_service._graphql_client:
-        return {"error": "No graphql client configured"}
-    client = twitter_service._graphql_client
+    import re
     debug_log = []
     
-    auth_token = client.auth_token
-    ct0 = client.ct0
-    
-    # Test setting cookies properly on requests.Session
-    s = requests.Session()
-    for d in [".x.com", ".twitter.com", "x.com", "twitter.com"]:
-        s.cookies.set("auth_token", auth_token, domain=d)
-        s.cookies.set("ct0", ct0, domain=d)
+    # Fetch x.com HTML and find bundle URLs
+    try:
+        r_home = requests.get(
+            "https://x.com",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            },
+            timeout=15
+        )
+        debug_log.append(f"x.com home status: {r_home.status_code}, html len: {len(r_home.text)}")
         
-    headers = {
-        "Authorization": f"Bearer {twitter_service._graphql_client._base_headers()['Authorization'].replace('Bearer ', '')}",
-        "x-csrf-token": ct0,
-        "x-twitter-active-user": "yes",
-        "x-twitter-client-language": "en",
-        "x-twitter-auth-type": "OAuth2Session",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Referer": "https://x.com/",
-        "Origin": "https://x.com",
-        "Accept": "*/*",
-    }
-    s.headers.update(headers)
-    
-    # 1. Test account verify endpoint
-    try:
-        r_me = s.get("https://api.twitter.com/1.1/account/verify_credentials.json", timeout=10)
-        debug_log.append({
-            "check": "verify_credentials",
-            "status": r_me.status_code,
-            "text": r_me.text[:200]
-        })
+        # Extract script tags
+        scripts = re.findall(r'src="(https://abs\.twimg\.com/[^"]+\.js)"', r_home.text)
+        if not scripts:
+            scripts = re.findall(r'"(https://abs\.twimg\.com/[^"]+\.js)"', r_home.text)
+            
+        debug_log.append(f"Found {len(scripts)} scripts on x.com")
+        
+        # Scan scripts for SearchTimeline
+        found_qids = []
+        for s_url in scripts[:15]:
+            try:
+                js_text = requests.get(s_url, timeout=10).text
+                matches = re.findall(r'queryId:"([^"]+)",operationName:"([^"]+)"', js_text)
+                for qid, op in matches:
+                    if "Search" in op or "Tweet" in op:
+                        found_qids.append({"operation": op, "queryId": qid, "bundle": s_url.split("/")[-1]})
+            except Exception:
+                continue
+                
+        debug_log.append({"operations_found": found_qids})
     except Exception as e:
-        debug_log.append({"check": "verify_credentials", "error": str(e)})
-
-    # 2. Test SearchTimeline with exact query
-    import json
-    variables = {
-        "rawQuery": "Coldplay",
-        "count": 5,
-        "querySource": "typed_query",
-        "product": "Latest"
-    }
-    features = {
-        "responsive_web_graphql_timeline_navigation_enabled": True,
-        "responsive_web_edit_tweet_api_enabled": True,
-        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
-        "view_counts_everywhere_api_enabled": True,
-        "longform_notetweets_consumption_enabled": True,
-        "tweet_awards_web_tipping_enabled": False,
-        "freedom_of_speech_not_reach_fetch_enabled": True,
-        "standardized_nudges_misinfo": True,
-        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-        "longform_notetweets_rich_text_read_enabled": True,
-        "longform_notetweets_inline_media_enabled": False,
-        "responsive_web_enhance_cards_enabled": False
-    }
-
-    url = "https://x.com/i/api/graphql/BGd0T_j7oVwlW5U79tO_0A/SearchTimeline"
-    try:
-        r_search = s.get(url, params={"variables": json.dumps(variables), "features": json.dumps(features)}, timeout=15)
-        debug_log.append({
-            "check": "SearchTimeline BGd0T",
-            "status": r_search.status_code,
-            "text": r_search.text[:300]
-        })
-    except Exception as e:
-        debug_log.append({"check": "SearchTimeline BGd0T", "error": str(e)})
+        debug_log.append(f"Scrape error: {e}")
 
     return {"debug": debug_log}
 
