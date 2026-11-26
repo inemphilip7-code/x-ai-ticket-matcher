@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import requests
 
 # Initialize system certificate store for Windows / macOS / Linux SSL handshakes
 try:

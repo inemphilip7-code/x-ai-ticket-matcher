@@ -116,13 +116,23 @@ class XGraphQLClient:
         self.auth_token = auth_token.strip()
         self.ct0 = ct0.strip()
         self._session = requests.Session()
+        self._setup_session()
+
+    def _setup_session(self):
+        # Set cookies on cookie jar for all relevant domains
+        for domain in [".x.com", ".twitter.com", "x.com", "twitter.com"]:
+            self._session.cookies.set("auth_token", self.auth_token, domain=domain)
+            self._session.cookies.set("ct0", self.ct0, domain=domain)
+
         self._session.headers.update(self._base_headers())
 
     def _base_headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {_WEB_BEARER}",
             "x-csrf-token": self.ct0,
-            "Cookie": f"auth_token={self.auth_token}; ct0={self.ct0}",
+            "x-twitter-active-user": "yes",
+            "x-twitter-client-language": "en",
+            "x-twitter-auth-type": "OAuth2Session",
             "Content-Type": "application/json",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
@@ -131,15 +141,15 @@ class XGraphQLClient:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
-            "x-twitter-active-user": "yes",
-            "x-twitter-client-language": "en",
             "Referer": "https://x.com/",
             "Origin": "https://x.com",
+            # Also include explicit Cookie header for servers that inspect it directly
+            "Cookie": f"auth_token={self.auth_token}; ct0={self.ct0}",
         }
 
     def _refresh_headers(self):
-        """Refresh cookies in headers (call after ct0 update)."""
-        self._session.headers.update(self._base_headers())
+        """Refresh cookies in headers and cookie jar (call after ct0 update)."""
+        self._setup_session()
 
     def search_tweets(self, query: str, count: int = 20) -> List[Dict[str, Any]]:
         """Search tweets via X's internal GraphQL SearchTimeline endpoint.
