@@ -51,13 +51,14 @@ _WEB_BEARER = (
 )
 
 # GraphQL query IDs — X rotates these occasionally; we try multiple known IDs
-# and also fetch the live one dynamically from x.com's JS bundle.
 _SEARCH_QUERY_IDS = [
+    "BGd0T_j7oVwlW5U79tO_0A",   # Twikit verified active
     "gkjsKepM6gl_HmFWoWKfgg",   # 2024-Q4
     "nK1dw4oV3k4w5TdtcAdSww",   # alternate
     "UN1i3zUiCp7-M1oNBMCOng",   # older fallback
 ]
 _CREATE_TWEET_QUERY_IDS = [
+    "wUgPBh9hEKhMMGlg8uDuFw",   # Twikit verified active
     "oB-5XsHNAbjvARJEc8CZFw",   # 2024-Q4
     "SoVnbfCycZ7fERGCwpZkYA",   # alternate
 ]
@@ -192,48 +193,51 @@ class XGraphQLClient:
 
         last_error = None
         for qid in qids_to_try:
-            url = f"https://api.twitter.com/graphql/{qid}/SearchTimeline"
-            try:
-                resp = self._session.get(url, params=params, timeout=30)
-                if resp.status_code == 403:
-                    self._refresh_headers()
+            for host in ["x.com", "twitter.com"]:
+                url = f"https://{host}/i/api/graphql/{qid}/SearchTimeline"
+                try:
                     resp = self._session.get(url, params=params, timeout=30)
-                if resp.status_code == 404:
-                    logger.warning(f"SearchTimeline queryId {qid} returned 404, trying next.")
-                    last_error = f"HTTP 404 for queryId {qid}"
+                    if resp.status_code == 403:
+                        self._refresh_headers()
+                        resp = self._session.get(url, params=params, timeout=30)
+                    if resp.status_code == 404:
+                        logger.warning(f"SearchTimeline {host} queryId {qid} returned 404, trying next.")
+                        last_error = f"HTTP 404 for queryId {qid} on {host}"
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    results = self._parse_search_results(data)
+                    _cached_search_qid = qid  # cache successful qid
+                    return results
+                except RuntimeError:
+                    raise
+                except requests.exceptions.HTTPError as e:
+                    status = e.response.status_code if e.response is not None else "?"
+                    if status == 404:
+                        last_error = f"HTTP 404 for queryId {qid} on {host}"
+                        continue
+                    raise RuntimeError(f"X GraphQL search HTTP {status}: {e}")
+                except Exception as e:
+                    last_error = str(e)
                     continue
-                resp.raise_for_status()
-                data = resp.json()
-                results = self._parse_search_results(data)
-                _cached_search_qid = qid  # cache successful qid
-                return results
-            except RuntimeError:
-                raise
-            except requests.exceptions.HTTPError as e:
-                status = e.response.status_code if e.response is not None else "?"
-                if status == 404:
-                    last_error = f"HTTP 404 for queryId {qid}"
-                    continue
-                raise RuntimeError(f"X GraphQL search HTTP {status}: {e}")
-            except Exception as e:
-                last_error = str(e)
-                raise RuntimeError(f"X GraphQL search request failed: {e}")
 
         # All known IDs failed — try to discover live queryId from x.com bundle
         logger.warning("All known SearchTimeline queryIds failed; attempting live discovery...")
         live_qid = _fetch_live_query_id("SearchTimeline")
         if live_qid and live_qid not in qids_to_try:
-            url = f"https://api.twitter.com/graphql/{live_qid}/SearchTimeline"
-            try:
-                resp = self._session.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-                results = self._parse_search_results(data)
-                _cached_search_qid = live_qid
-                logger.info(f"Live-discovered SearchTimeline queryId: {live_qid}")
-                return results
-            except Exception as e:
-                raise RuntimeError(f"X GraphQL search failed (all queryIds exhausted). Last error: {e}")
+            for host in ["x.com", "twitter.com"]:
+                url = f"https://{host}/i/api/graphql/{live_qid}/SearchTimeline"
+                try:
+                    resp = self._session.get(url, params=params, timeout=30)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    results = self._parse_search_results(data)
+                    _cached_search_qid = live_qid
+                    logger.info(f"Live-discovered SearchTimeline queryId: {live_qid}")
+                    return results
+                except Exception as e:
+                    last_error = str(e)
+                    continue
 
         raise RuntimeError(f"X GraphQL search failed — all queryIds returned 404. X may have rotated them. Last: {last_error}")
 
@@ -360,63 +364,67 @@ class XGraphQLClient:
                 "features": features,
                 "queryId": qid,
             }
-            url = f"https://api.twitter.com/graphql/{qid}/CreateTweet"
-            try:
-                resp = self._session.post(url, json=payload, timeout=30)
-                if resp.status_code == 403:
-                    self._refresh_headers()
-                    resp = self._session.post(url, json=payload, timeout=30)
-                if resp.status_code == 404:
-                    last_error = f"HTTP 404 for queryId {qid}"
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                tweet_id = (
-                    data.get("data", {})
-                    .get("create_tweet", {})
-                    .get("tweet_results", {})
-                    .get("result", {})
-                    .get("rest_id", "")
-                )
-                if not tweet_id:
-                    raise RuntimeError("CreateTweet: no tweet ID in response")
-                _cached_create_qid = qid
-                return tweet_id
-            except RuntimeError:
-                raise
-            except requests.exceptions.HTTPError as e:
-                status = e.response.status_code if e.response is not None else "?"
-                body = ""
+            for host in ["x.com", "twitter.com"]:
+                url = f"https://{host}/i/api/graphql/{qid}/CreateTweet"
                 try:
-                    body = e.response.text[:300]
-                except Exception:
-                    pass
-                if status == 404:
-                    last_error = f"HTTP 404 for queryId {qid}"
+                    resp = self._session.post(url, json=payload, timeout=30)
+                    if resp.status_code == 403:
+                        self._refresh_headers()
+                        resp = self._session.post(url, json=payload, timeout=30)
+                    if resp.status_code == 404:
+                        last_error = f"HTTP 404 for queryId {qid} on {host}"
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    tweet_id = (
+                        data.get("data", {})
+                        .get("create_tweet", {})
+                        .get("tweet_results", {})
+                        .get("result", {})
+                        .get("rest_id", "")
+                    )
+                    if not tweet_id:
+                        raise RuntimeError("CreateTweet: no tweet ID in response")
+                    _cached_create_qid = qid
+                    return tweet_id
+                except RuntimeError:
+                    raise
+                except requests.exceptions.HTTPError as e:
+                    status = e.response.status_code if e.response is not None else "?"
+                    body = ""
+                    try:
+                        body = e.response.text[:300]
+                    except Exception:
+                        pass
+                    if status == 404:
+                        last_error = f"HTTP 404 for queryId {qid} on {host}"
+                        continue
+                    raise RuntimeError(f"X GraphQL CreateTweet HTTP {status}: {body}")
+                except Exception as e:
+                    last_error = str(e)
                     continue
-                raise RuntimeError(f"X GraphQL CreateTweet HTTP {status}: {body}")
-            except Exception as e:
-                raise RuntimeError(f"X GraphQL CreateTweet request failed: {e}")
 
         # Try live discovery
         live_qid = _fetch_live_query_id("CreateTweet")
         if live_qid:
             payload = {"variables": variables, "features": features, "queryId": live_qid}
-            url = f"https://api.twitter.com/graphql/{live_qid}/CreateTweet"
-            try:
-                resp = self._session.post(url, json=payload, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-                tweet_id = (
-                    data.get("data", {}).get("create_tweet", {})
-                    .get("tweet_results", {}).get("result", {}).get("rest_id", "")
-                )
-                if not tweet_id:
-                    raise RuntimeError("CreateTweet: no tweet ID in response")
-                _cached_create_qid = live_qid
-                return tweet_id
-            except Exception as e:
-                raise RuntimeError(f"X GraphQL CreateTweet failed (all queryIds): {e}")
+            for host in ["x.com", "twitter.com"]:
+                url = f"https://{host}/i/api/graphql/{live_qid}/CreateTweet"
+                try:
+                    resp = self._session.post(url, json=payload, timeout=30)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    tweet_id = (
+                        data.get("data", {}).get("create_tweet", {})
+                        .get("tweet_results", {}).get("result", {}).get("rest_id", "")
+                    )
+                    if not tweet_id:
+                        raise RuntimeError("CreateTweet: no tweet ID in response")
+                    _cached_create_qid = live_qid
+                    return tweet_id
+                except Exception as e:
+                    last_error = str(e)
+                    continue
 
         raise RuntimeError(f"X GraphQL CreateTweet failed — all queryIds returned 404. Last: {last_error}")
 
@@ -705,7 +713,14 @@ class TwitterService:
             f'-is:retweet -is:reply'
         )
 
-        # Try official API first
+        # 1. Prefer GraphQL cookie search if cookies are configured (Free, no rate limits, works without paid tier)
+        if self._graphql_client:
+            try:
+                return self._graphql_search(query, "buyer", count)
+            except Exception as e:
+                logger.warning(f"GraphQL cookie search failed ({e}), attempting official API fallback...")
+
+        # 2. Fallback: Official API (requires Basic/Pro tier for search)
         client = self._search_client or self._client
         if client:
             try:
@@ -737,25 +752,9 @@ class TwitterService:
                         ))
                     return tweets
                 return []
-            except tweepy.errors.TweepyException as te:
-                err_str = str(te)
-                if self._graphql_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
-                    logger.warning(f"Official X search unavailable ({err_str}); falling back to GraphQL cookie search.")
-                else:
-                    logger.error(f"Tweepy buyer search error: {te}")
-                    raise RuntimeError(self._format_search_error(te))
-            except Exception as e:
-                if not self._graphql_client:
-                    logger.error(f"Unexpected error searching X buyers: {e}")
-                    raise RuntimeError(f"Failed to query X for buyers: {e}")
-
-        # Fallback: GraphQL cookie search
-        if self._graphql_client:
-            try:
-                return self._graphql_search(query, "buyer", count)
-            except Exception as e:
-                logger.error(f"GraphQL cookie buyer search error: {e}")
-                raise RuntimeError(f"GraphQL cookie search error: {e}")
+            except Exception as te:
+                logger.error(f"Tweepy buyer search error: {te}")
+                raise RuntimeError(self._format_search_error(te))
 
         return []
 
@@ -796,6 +795,14 @@ class TwitterService:
             f'-is:retweet -is:reply'
         )
 
+        # 1. Prefer GraphQL cookie search if cookies are configured
+        if self._graphql_client:
+            try:
+                return self._graphql_search(query, "seller", count)
+            except Exception as e:
+                logger.warning(f"GraphQL cookie seller search failed ({e}), attempting official API fallback...")
+
+        # 2. Fallback: Official API
         client = self._search_client or self._client
         if client:
             try:
@@ -827,24 +834,9 @@ class TwitterService:
                         ))
                     return tweets
                 return []
-            except tweepy.errors.TweepyException as te:
-                err_str = str(te)
-                if self._graphql_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
-                    logger.warning(f"Official X seller search unavailable ({err_str}); falling back to GraphQL cookie search.")
-                else:
-                    logger.error(f"Tweepy seller search error: {te}")
-                    raise RuntimeError(self._format_search_error(te))
-            except Exception as e:
-                if not self._graphql_client:
-                    logger.error(f"Unexpected error searching X sellers: {e}")
-                    raise RuntimeError(f"Failed to query X for sellers: {e}")
-
-        if self._graphql_client:
-            try:
-                return self._graphql_search(query, "seller", count)
-            except Exception as e:
-                logger.error(f"GraphQL cookie seller search error: {e}")
-                raise RuntimeError(f"GraphQL cookie search error: {e}")
+            except Exception as te:
+                logger.error(f"Tweepy seller search error: {te}")
+                raise RuntimeError(self._format_search_error(te))
 
         return []
 
