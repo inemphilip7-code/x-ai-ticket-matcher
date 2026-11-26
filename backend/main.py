@@ -118,6 +118,52 @@ def get_frontend_url(request: Request) -> str:
         return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
     return os.getenv("CORS_ORIGIN", "http://localhost:3000").split(",")[0].strip().rstrip("/")
 
+@app.get("/api/debug/graphql")
+def debug_graphql():
+    if not twitter_service._graphql_client:
+        return {"error": "No graphql client configured"}
+    client = twitter_service._graphql_client
+    debug_log = []
+    
+    # Check session
+    valid = client.verify_session()
+    debug_log.append(f"verify_session: {valid}")
+    
+    # Try calling SearchTimeline directly and record exact HTTP response
+    import json
+    variables = {
+        "rawQuery": "Coldplay",
+        "count": 5,
+        "querySource": "typed_query",
+        "product": "Latest",
+    }
+    features = {
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "tweet_awards_web_tipping_enabled": False,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    }
+    
+    for qid in ["BGd0T_j7oVwlW5U79tO_0A", "gkjsKepM6gl_HmFWoWKfgg"]:
+        for host in ["x.com", "twitter.com"]:
+            url = f"https://{host}/i/api/graphql/{qid}/SearchTimeline"
+            try:
+                resp = client._session.get(url, params={"variables": json.dumps(variables), "features": json.dumps(features)}, timeout=15)
+                debug_log.append({
+                    "url": url,
+                    "status_code": resp.status_code,
+                    "body_snippet": resp.text[:400]
+                })
+            except Exception as e:
+                debug_log.append({"url": url, "error": str(e)})
+                
+    return {"debug": debug_log}
+
 @app.get("/")
 def root():
     return {
