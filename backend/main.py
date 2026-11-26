@@ -124,39 +124,33 @@ def debug_graphql():
     import re
     debug_log = []
     
-    # Fetch x.com HTML and find bundle URLs
     try:
         r_home = requests.get(
-            "https://x.com",
+            "https://x.com/search?q=test&f=live",
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             },
             timeout=15
         )
-        debug_log.append(f"x.com home status: {r_home.status_code}, html len: {len(r_home.text)}")
+        debug_log.append(f"search page status: {r_home.status_code}")
         
-        # Extract script tags
-        scripts = re.findall(r'src="(https://abs\.twimg\.com/[^"]+\.js)"', r_home.text)
-        if not scripts:
-            scripts = re.findall(r'"(https://abs\.twimg\.com/[^"]+\.js)"', r_home.text)
-            
-        debug_log.append(f"Found {len(scripts)} scripts on x.com")
+        # Look for all twimg js URLs
+        all_js = list(set(re.findall(r'https://abs\.twimg\.com/[^"\'\s<>]+\.js', r_home.text)))
+        debug_log.append(f"JS files on search page: {all_js[:10]}")
         
-        # Scan scripts for SearchTimeline
-        found_qids = []
-        for s_url in scripts[:15]:
+        # Search inside each JS file for SearchTimeline or queryId
+        found = []
+        for js_url in all_js:
             try:
-                js_text = requests.get(s_url, timeout=10).text
-                matches = re.findall(r'queryId:"([^"]+)",operationName:"([^"]+)"', js_text)
-                for qid, op in matches:
-                    if "Search" in op or "Tweet" in op:
-                        found_qids.append({"operation": op, "queryId": qid, "bundle": s_url.split("/")[-1]})
+                js_content = requests.get(js_url, timeout=10).text
+                q_matches = re.findall(r'queryId:\s*"([^"]+)",\s*operationName:\s*"([^"]+)"', js_content)
+                for qid, op in q_matches:
+                    found.append({"op": op, "qid": qid, "src": js_url.split("/")[-1]})
             except Exception:
                 continue
-                
-        debug_log.append({"operations_found": found_qids})
+        debug_log.append({"found_queries": found})
     except Exception as e:
-        debug_log.append(f"Scrape error: {e}")
+        debug_log.append(f"Error: {e}")
 
     return {"debug": debug_log}
 
