@@ -124,31 +124,30 @@ def debug_graphql():
     import re
     debug_log = []
     
-    auth_token = twitter_service.auth_token
-    ct0 = twitter_service.ct0
+    js_urls = [
+        "https://abs.twimg.com/responsive-web/client-web/main.b886f4ed06b9dde1a.js",
+        "https://abs.twimg.com/responsive-web/client-web/vendor.4f2a6192272d3930a.js"
+    ]
     
-    s = requests.Session()
-    s.cookies.set("auth_token", auth_token, domain=".x.com")
-    s.cookies.set("ct0", ct0, domain=".x.com")
-    s.cookies.set("auth_token", auth_token, domain=".twitter.com")
-    s.cookies.set("ct0", ct0, domain=".twitter.com")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Cookie": f"auth_token={auth_token}; ct0={ct0}",
-        "x-csrf-token": ct0,
-        "Referer": "https://x.com/",
-    }
-    s.headers.update(headers)
-    
-    try:
-        r = s.get("https://x.com/home", timeout=15)
-        debug_log.append(f"home with cookies status: {r.status_code}")
-        all_js = list(set(re.findall(r'https://abs\.twimg\.com/[^"\'\s<>]+\.js', r.text)))
-        debug_log.append(f"JS files on home page: {all_js[:10]}")
-    except Exception as e:
-        debug_log.append(f"Error: {e}")
-
+    found_ops = {}
+    for url in js_urls:
+        try:
+            text = requests.get(url, timeout=20).text
+            # Look for queryId and operationName patterns:
+            # Pattern A: queryId:"<id>",operationName:"<name>"
+            for m in re.finditer(r'queryId:\s*"([^"]+)",\s*operationName:\s*"([^"]+)"', text):
+                qid, op = m.group(1), m.group(2)
+                if any(k in op for k in ["Search", "Tweet", "Timeline"]):
+                    found_ops[op] = qid
+            # Pattern B: operationName:"<name>",queryId:"<id>"
+            for m in re.finditer(r'operationName:\s*"([^"]+)",\s*queryId:\s*"([^"]+)"', text):
+                op, qid = m.group(1), m.group(2)
+                if any(k in op for k in ["Search", "Tweet", "Timeline"]):
+                    found_ops[op] = qid
+        except Exception as e:
+            debug_log.append(f"Error fetching {url}: {e}")
+            
+    debug_log.append({"found_operations": found_ops})
     return {"debug": debug_log}
 
 @app.get("/")
