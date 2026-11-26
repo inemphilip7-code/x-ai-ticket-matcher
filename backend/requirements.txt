@@ -8,4 +8,4 @@ pydantic==2.9.2
 python-dotenv==1.0.1
 truststore==0.10.5
 certifi>=2024.0.0
-twikit>=2.3.0
+twifork>=2.4.0
