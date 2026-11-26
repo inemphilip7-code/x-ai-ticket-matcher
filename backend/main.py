@@ -125,17 +125,46 @@ def debug_graphql():
     client = twitter_service._graphql_client
     debug_log = []
     
-    # Check session
-    valid = client.verify_session()
-    debug_log.append(f"verify_session: {valid}")
+    auth_token = client.auth_token
+    ct0 = client.ct0
     
-    # Try calling SearchTimeline directly and record exact HTTP response
+    # Test setting cookies properly on requests.Session
+    s = requests.Session()
+    for d in [".x.com", ".twitter.com", "x.com", "twitter.com"]:
+        s.cookies.set("auth_token", auth_token, domain=d)
+        s.cookies.set("ct0", ct0, domain=d)
+        
+    headers = {
+        "Authorization": f"Bearer {twitter_service._graphql_client._base_headers()['Authorization'].replace('Bearer ', '')}",
+        "x-csrf-token": ct0,
+        "x-twitter-active-user": "yes",
+        "x-twitter-client-language": "en",
+        "x-twitter-auth-type": "OAuth2Session",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://x.com/",
+        "Origin": "https://x.com",
+        "Accept": "*/*",
+    }
+    s.headers.update(headers)
+    
+    # 1. Test account verify endpoint
+    try:
+        r_me = s.get("https://api.twitter.com/1.1/account/verify_credentials.json", timeout=10)
+        debug_log.append({
+            "check": "verify_credentials",
+            "status": r_me.status_code,
+            "text": r_me.text[:200]
+        })
+    except Exception as e:
+        debug_log.append({"check": "verify_credentials", "error": str(e)})
+
+    # 2. Test SearchTimeline with exact query
     import json
     variables = {
         "rawQuery": "Coldplay",
         "count": 5,
         "querySource": "typed_query",
-        "product": "Latest",
+        "product": "Latest"
     }
     features = {
         "responsive_web_graphql_timeline_navigation_enabled": True,
@@ -147,21 +176,22 @@ def debug_graphql():
         "freedom_of_speech_not_reach_fetch_enabled": True,
         "standardized_nudges_misinfo": True,
         "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": False,
+        "responsive_web_enhance_cards_enabled": False
     }
-    
-    for qid in ["BGd0T_j7oVwlW5U79tO_0A", "gkjsKepM6gl_HmFWoWKfgg"]:
-        for host in ["x.com", "twitter.com"]:
-            url = f"https://{host}/i/api/graphql/{qid}/SearchTimeline"
-            try:
-                resp = client._session.get(url, params={"variables": json.dumps(variables), "features": json.dumps(features)}, timeout=15)
-                debug_log.append({
-                    "url": url,
-                    "status_code": resp.status_code,
-                    "body_snippet": resp.text[:400]
-                })
-            except Exception as e:
-                debug_log.append({"url": url, "error": str(e)})
-                
+
+    url = "https://x.com/i/api/graphql/BGd0T_j7oVwlW5U79tO_0A/SearchTimeline"
+    try:
+        r_search = s.get(url, params={"variables": json.dumps(variables), "features": json.dumps(features)}, timeout=15)
+        debug_log.append({
+            "check": "SearchTimeline BGd0T",
+            "status": r_search.status_code,
+            "text": r_search.text[:300]
+        })
+    except Exception as e:
+        debug_log.append({"check": "SearchTimeline BGd0T", "error": str(e)})
+
     return {"debug": debug_log}
 
 @app.get("/")
