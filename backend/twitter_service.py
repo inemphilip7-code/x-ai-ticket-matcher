@@ -50,17 +50,17 @@ _WEB_BEARER = (
     "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 )
 
-# GraphQL query IDs — X rotates these occasionally; we try multiple known IDs
+# GraphQL query IDs — dynamically extracted from live x.com client bundles
 _SEARCH_QUERY_IDS = [
-    "BGd0T_j7oVwlW5U79tO_0A",   # Twikit verified active
-    "gkjsKepM6gl_HmFWoWKfgg",   # 2024-Q4
-    "nK1dw4oV3k4w5TdtcAdSww",   # alternate
-    "UN1i3zUiCp7-M1oNBMCOng",   # older fallback
+    "vLHjqbDv7TPFMBkIIO1nOA",   # Verified live active on x.com
+    "BGd0T_j7oVwlW5U79tO_0A",
+    "gkjsKepM6gl_HmFWoWKfgg",
+    "nK1dw4oV3k4w5TdtcAdSww",
 ]
 _CREATE_TWEET_QUERY_IDS = [
-    "wUgPBh9hEKhMMGlg8uDuFw",   # Twikit verified active
-    "oB-5XsHNAbjvARJEc8CZFw",   # 2024-Q4
-    "SoVnbfCycZ7fERGCwpZkYA",   # alternate
+    "l4hk8uVGvR-a8kzQ4nOhPA",   # Verified live active on x.com
+    "wUgPBh9hEKhMMGlg8uDuFw",
+    "oB-5XsHNAbjvARJEc8CZFw",
 ]
 
 _cached_search_qid: Optional[str] = None

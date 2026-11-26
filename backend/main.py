@@ -121,34 +121,62 @@ def get_frontend_url(request: Request) -> str:
 
 @app.get("/api/debug/graphql")
 def debug_graphql():
-    import re
-    debug_log = []
+    import json
+    auth_token = twitter_service.auth_token
+    ct0 = twitter_service.ct0
     
-    js_urls = [
-        "https://abs.twimg.com/responsive-web/client-web/main.b886f4ed06b9dde1a.js",
-        "https://abs.twimg.com/responsive-web/client-web/vendor.4f2a6192272d3930a.js"
-    ]
+    s = requests.Session()
+    for d in [".x.com", ".twitter.com", "x.com", "twitter.com"]:
+        s.cookies.set("auth_token", auth_token, domain=d)
+        s.cookies.set("ct0", ct0, domain=d)
+        
+    s.headers.update({
+        "Authorization": f"Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "x-csrf-token": ct0,
+        "x-twitter-active-user": "yes",
+        "x-twitter-client-language": "en",
+        "x-twitter-auth-type": "OAuth2Session",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://x.com/",
+        "Origin": "https://x.com",
+        "Cookie": f"auth_token={auth_token}; ct0={ct0}",
+    })
     
-    found_ops = {}
-    for url in js_urls:
-        try:
-            text = requests.get(url, timeout=20).text
-            # Look for queryId and operationName patterns:
-            # Pattern A: queryId:"<id>",operationName:"<name>"
-            for m in re.finditer(r'queryId:\s*"([^"]+)",\s*operationName:\s*"([^"]+)"', text):
-                qid, op = m.group(1), m.group(2)
-                if any(k in op for k in ["Search", "Tweet", "Timeline"]):
-                    found_ops[op] = qid
-            # Pattern B: operationName:"<name>",queryId:"<id>"
-            for m in re.finditer(r'operationName:\s*"([^"]+)",\s*queryId:\s*"([^"]+)"', text):
-                op, qid = m.group(1), m.group(2)
-                if any(k in op for k in ["Search", "Tweet", "Timeline"]):
-                    found_ops[op] = qid
-        except Exception as e:
-            debug_log.append(f"Error fetching {url}: {e}")
-            
-    debug_log.append({"found_operations": found_ops})
-    return {"debug": debug_log}
+    qid = "vLHjqbDv7TPFMBkIIO1nOA"
+    variables = {
+        "rawQuery": "Coldplay",
+        "count": 5,
+        "querySource": "typed_query",
+        "product": "Latest"
+    }
+    features = {
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "tweet_awards_web_tipping_enabled": False,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": False,
+        "responsive_web_enhance_cards_enabled": False,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "communities_web_enable_tweet_community_results_fetch": True,
+        "c9s_tweet_anatomy_moderator_badge_enabled": True,
+        "articles_preview_enabled": True
+    }
+    
+    url = f"https://x.com/i/api/graphql/{qid}/SearchTimeline"
+    try:
+        r = s.get(url, params={"variables": json.dumps(variables), "features": json.dumps(features)}, timeout=15)
+        return {
+            "status": r.status_code,
+            "text": r.text[:600]
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/")
 def root():
