@@ -26,7 +26,8 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
   
   // Gemini AI state
   const [geminiKey, setGeminiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState(status?.ai_model || 'gemini-1.5-flash');
+  const [geminiFallbackKey, setGeminiFallbackKey] = useState('');
+  const [geminiModel, setGeminiModel] = useState(status?.ai_model || 'gemini-3.5-flash-lite');
   
   const [saving, setSaving] = useState(false);
   const [connectingOAuth, setConnectingOAuth] = useState(false);
@@ -85,6 +86,7 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
       if (accessToken.trim()) payload.twitter_access_token = accessToken.trim();
       if (accessTokenSecret.trim()) payload.twitter_access_token_secret = accessTokenSecret.trim();
       if (geminiKey.trim()) payload.gemini_api_key = geminiKey.trim();
+      if (geminiFallbackKey.trim()) payload.gemini_api_key_fallback = geminiFallbackKey.trim();
       if (geminiModel.trim()) payload.gemini_model = geminiModel.trim();
 
       const res = await fetch(`${apiUrl}/api/config`, {
@@ -384,7 +386,7 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-sm text-purple-300 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-purple-400" />
-                  Google Gemini AI Engine
+                  Multilingual Google Gemini AI Engine
                 </span>
                 <a
                   href="https://aistudio.google.com/app/apikey"
@@ -396,23 +398,38 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
                 </a>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Powered by Google Gemini 1.5 Flash. Analyzes buyer tweets for ticket requests, ensures unique non-repetitive comments, and strictly excludes buyer usernames & payment methods.
+                Powered by Google Gemini with dual-key high availability. Automatically detects the language of the buyer's post and the geographic location of the event (English, Spanish, French, German, Italian, Portuguese) and responds in that exact native language!
               </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Google Gemini API Key
+                  Primary Gemini API Key
                 </label>
                 <input
                   type="password"
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
-                  placeholder={status?.ai_configured ? '•••••••••••• (Gemini Active)' : 'Paste Gemini API Key...'}
+                  placeholder={status?.ai_configured ? '•••••••••••• (Primary Active)' : 'Paste Primary Gemini Key...'}
                   className="w-full px-3.5 py-2.5 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Fallback Gemini API Key (High Availability)
+                </label>
+                <input
+                  type="password"
+                  value={geminiFallbackKey}
+                  onChange={(e) => setGeminiFallbackKey(e.target.value)}
+                  placeholder="•••••••••••• (Fallback Active)"
+                  className="w-full px-3.5 py-2.5 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
                   Gemini Model
@@ -421,7 +438,7 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
                   type="text"
                   value={geminiModel}
                   onChange={(e) => setGeminiModel(e.target.value)}
-                  placeholder="gemini-1.5-flash"
+                  placeholder="gemini-3.5-flash-lite"
                   className="w-full px-3.5 py-2.5 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
                 />
               </div>

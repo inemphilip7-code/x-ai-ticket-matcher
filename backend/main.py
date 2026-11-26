@@ -434,6 +434,9 @@ def update_credentials(req: ConfigUpdateRequest):
     if req.gemini_api_key is not None:
         os.environ["GEMINI_API_KEY"] = req.gemini_api_key
         set_key(env_path, "GEMINI_API_KEY", req.gemini_api_key)
+    if req.gemini_api_key_fallback is not None:
+        os.environ["GEMINI_API_KEY_FALLBACK"] = req.gemini_api_key_fallback
+        set_key(env_path, "GEMINI_API_KEY_FALLBACK", req.gemini_api_key_fallback)
     if req.gemini_model is not None:
         os.environ["GEMINI_MODEL"] = req.gemini_model
         set_key(env_path, "GEMINI_MODEL", req.gemini_model)

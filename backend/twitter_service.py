@@ -171,11 +171,13 @@ class TwitterService:
         if not self._client:
             raise RuntimeError("X API client not configured. Connect your X account or enter keys in Settings.")
 
+        # Multilingual buyer search query (English, Spanish, French, German, Italian, Portuguese)
         query = (
             f'("{keyword}") '
-            f'("looking for ticket" OR "looking for tickets" OR "who has ticket" OR "who has tickets" OR '
-            f'"who as ticket" OR "who has extra" OR "need ticket" OR "need tickets" OR "anyone selling" OR "wtb ticket") '
-            f'-is:retweet -is:reply lang:en'
+            f'("looking for" OR "need ticket" OR "who has" OR "wtb" OR '
+            f'"busco entrada" OR "busco boleta" OR "cherche place" OR "cherche billet" OR '
+            f'"suche ticket" OR "suche karte" OR "cerco biglietto" OR "procuro ingresso") '
+            f'-is:retweet -is:reply'
         )
         try:
             logger.info(f"Searching live X for buyers: {query}")
@@ -215,11 +217,12 @@ class TwitterService:
         if not self._client:
             raise RuntimeError("X API client not configured. Connect your X account or enter keys in Settings.")
 
+        # Multilingual seller search query (English, Spanish, French, German, Italian, Portuguese)
         query = (
             f'("{keyword}") '
-            f'("selling ticket" OR "selling tickets" OR "selling at discount" OR "extra ticket" OR "extra tickets" OR '
-            f'"have extra" OR "wts ticket" OR "tickets available") '
-            f'-is:retweet -is:reply lang:en'
+            f'("selling ticket" OR "have extra" OR "wts" OR "tickets available" OR '
+            f'"vendo entrada" OR "vendo boleta" OR "vends place" OR "verkaufe ticket" OR "vendo biglietto" OR "vendo ingresso") '
+            f'-is:retweet -is:reply'
         )
         try:
             logger.info(f"Searching live X for sellers: {query}")
