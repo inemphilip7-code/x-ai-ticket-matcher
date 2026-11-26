@@ -313,10 +313,10 @@ def twitter_oauth_callback(
 @app.get("/api/status", response_model=SystemStatusResponse)
 def get_system_status():
     ai_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("AI_API_KEY", "").strip()
-    ai_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
+    ai_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     cred_status = twitter_service.get_credential_status()
     stats = get_stats()
-    seller_username = get_setting("seller_username", "").lstrip("@")
+    seller_username = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).lstrip("@")
     
     return SystemStatusResponse(
         live_x_connected=twitter_service.is_configured(),
@@ -338,7 +338,7 @@ def get_system_status():
 # --- Target Seller Username Endpoints ---
 @app.get("/api/settings/seller")
 def get_target_seller():
-    seller = get_setting("seller_username", "").lstrip("@")
+    seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).lstrip("@")
     return {"seller_username": seller}
 
 @app.post("/api/settings/seller")

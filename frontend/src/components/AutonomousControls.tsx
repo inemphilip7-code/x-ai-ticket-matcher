@@ -30,6 +30,18 @@ export const AutonomousControls: React.FC<Props> = ({
   const [intervalSec, setIntervalSec] = useState(status?.autonomous_scanner.interval_seconds || 1500);
   const [threshold, setThreshold] = useState(status?.autonomous_scanner.confidence_threshold || 70);
 
+  // Dynamically sync controls with current saved settings from backend
+  React.useEffect(() => {
+    if (status?.autonomous_scanner) {
+      if (status.autonomous_scanner.interval_seconds) {
+        setIntervalSec(status.autonomous_scanner.interval_seconds);
+      }
+      if (status.autonomous_scanner.confidence_threshold) {
+        setThreshold(status.autonomous_scanner.confidence_threshold);
+      }
+    }
+  }, [status?.autonomous_scanner?.interval_seconds, status?.autonomous_scanner?.confidence_threshold]);
+
   const isRunning = status?.autonomous_scanner.is_running;
 
   const handleAddSubmit = async (e: React.FormEvent) => {

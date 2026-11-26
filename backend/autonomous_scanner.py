@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from database import (
     get_monitored_keywords, pair_already_processed, insert_match, 
-    log_activity, record_scan, get_setting
+    log_activity, record_scan, get_setting, set_setting
 )
 from models import Tweet
 from twitter_service import twitter_service
@@ -15,13 +15,14 @@ logger = logging.getLogger("autonomous_scanner")
 
 class AutonomousScanner:
     def __init__(self):
-        self.is_running = os.getenv("AUTO_SCAN_ENABLED", "true").lower() in ("true", "1", "yes")
-        self.interval_seconds = int(os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "1500"))  # default 25 minutes
-        self.confidence_threshold = int(os.getenv("AUTO_POST_CONFIDENCE_THRESHOLD", "70"))
+        self.is_running = get_setting("auto_scan_enabled", os.getenv("AUTO_SCAN_ENABLED", "true")).lower() in ("true", "1", "yes")
+        self.interval_seconds = int(get_setting("auto_scan_interval_seconds", os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "1500")))
+        self.confidence_threshold = int(get_setting("auto_post_confidence_threshold", os.getenv("AUTO_POST_CONFIDENCE_THRESHOLD", "70")))
         self._task: Optional[asyncio.Task] = None
 
     def start(self):
         self.is_running = True
+        set_setting("auto_scan_enabled", "true")
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._scan_loop())
             mins = self.interval_seconds // 60
@@ -33,6 +34,7 @@ class AutonomousScanner:
 
     def stop(self):
         self.is_running = False
+        set_setting("auto_scan_enabled", "false")
         if self._task and not self._task.done():
             self._task.cancel()
         log_activity("info", "Autonomous X Scanner paused.")
@@ -40,18 +42,22 @@ class AutonomousScanner:
     def set_config(self, interval: Optional[int] = None, threshold: Optional[int] = None):
         if interval and interval >= 15:
             self.interval_seconds = interval
+            set_setting("auto_scan_interval_seconds", str(interval))
         if threshold and 0 <= threshold <= 100:
             self.confidence_threshold = threshold
+            set_setting("auto_post_confidence_threshold", str(threshold))
         mins = self.interval_seconds // 60
-        log_activity("info", f"Scanner settings updated: interval={mins}m, threshold={self.confidence_threshold}%")
+        log_activity("info", f"Scanner settings updated & saved: interval={mins}m, threshold={self.confidence_threshold}%")
 
     async def run_scan_cycle_for_keyword(self, keyword: str):
         if not twitter_service.is_configured():
             log_activity("warning", "X credentials not ready. Click 'Connect with 𝕏' or supply keys in Settings to start live scanning.")
             return
 
-        # Check for configured seller username
-        target_seller = get_setting("seller_username", "").strip().lstrip("@")
+        # Check for configured seller username (defaults to xzavior if not set)
+        target_seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).strip().lstrip("@")
+        if not target_seller:
+            target_seller = "xzavior"
 
         log_activity("info", f"Sweeping live X for ticket requests: '{keyword}'...")
         

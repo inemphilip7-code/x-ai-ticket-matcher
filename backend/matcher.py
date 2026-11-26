@@ -8,34 +8,37 @@ from models import Tweet, MatchEvaluation
 logger = logging.getLogger("matcher")
 
 BUYER_INTENT_KEYWORDS = [
-    # English
-    "looking for", "who has", "who as", "need ticket", "need tickets",
-    "anyone have", "anyone selling", "wtb", "buying", "seeking", "extra ticket",
+    # Explicit buying intent phrases only
+    "looking for ticket", "looking for tickets", "looking for tix", "need ticket", "need tickets", "need tix",
+    "anyone selling ticket", "anyone selling tickets", "who has ticket", "who has tickets", "who's selling ticket",
+    "who is selling ticket", "wtb ticket", "wtb tickets", "buying ticket", "buying tickets", "seeking ticket",
+    "extra ticket", "spare ticket", "tickets available?", "any tickets available",
     # Spanish
-    "busco entrada", "busco entradas", "busco boleta", "busco boletos", "alguien vende", "compro entrada",
+    "busco entrada", "busco entradas", "busco boleta", "busco boletos", "alguien vende entrada", "compro entrada", "compro boleta",
     # French
-    "cherche place", "cherche places", "cherche billet", "cherche billets", "qui vend",
+    "cherche place", "cherche places", "cherche billet", "cherche billets", "qui vend des places", "achète place",
     # German
-    "suche ticket", "suche tickets", "suche karte", "suche karten", "wer hat ticket",
+    "suche ticket", "suche tickets", "suche karte", "suche karten", "wer hat tickets", "kaufe ticket",
     # Italian
-    "cerco biglietto", "cerco biglietti", "chi vende", "compro biglietto",
+    "cerco biglietto", "cerco biglietti", "chi vende biglietti", "compro biglietto",
     # Portuguese
-    "procuro ingresso", "procuro ingressos", "compro ingresso", "quem vende"
+    "procuro ingresso", "procuro ingressos", "compro ingresso", "quem vende ingresso"
 ]
 
 SELLER_INTENT_KEYWORDS = [
-    # English
-    "selling", "discount", "face value", "retail", "extra", "have extra", "spare", "wts", "transferrable", "available",
+    # Explicit selling intent phrases only
+    "selling ticket", "selling tickets", "selling tix", "have extra ticket", "have spare ticket",
+    "tickets available", "tix available", "wts ticket", "transferrable ticket", "tickets with discount",
     # Spanish
-    "vendo", "vendo entrada", "vendo boleta", "descuento", "disponible",
+    "vendo entrada", "vendo entradas", "vendo boleta", "vendo boletos", "entradas disponibles",
     # French
-    "vends", "vends place", "vends billet", "réduction", "disponible",
+    "vends place", "vends places", "vends billet", "vends billets", "places disponibles",
     # German
-    "verkaufe", "abzugeben", "unter originalpreis", "rabatt",
+    "verkaufe ticket", "verkaufe tickets", "verkaufe karte", "karten abzugeben", "tickets abzugeben",
     # Italian
-    "vendo", "vendo biglietto", "sconto", "disponibile",
+    "vendo biglietto", "vendo biglietti", "biglietti disponibili",
     # Portuguese
-    "vendo", "vendo ingresso", "desconto", "disponível"
+    "vendo ingresso", "vendo ingressos", "ingressos disponíveis"
 ]
 
 # Multilingual, varied comment templates (NO buyer username, NO payment methods)
@@ -102,12 +105,13 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
     # Remove buyer username tag if model mistakenly included it
     if buyer_username:
         cleaned = cleaned.replace(f"@{buyer_username}", "").strip()
-        # Clean up any leading comma or punctuation left behind
         cleaned = cleaned.lstrip(",:;- ").strip()
         
-    # Ensure seller username is tagged
-    if f"@{seller_username}" not in cleaned:
-        cleaned = f"@{seller_username} {cleaned}"
+    # Ensure seller username is ALWAYS explicitly tagged
+    if seller_username:
+        clean_seller = seller_username.lstrip("@")
+        if f"@{clean_seller}" not in cleaned:
+            cleaned = f"Hey! Check with @{clean_seller}, they have {keyword} tickets available."
         
     # Remove any accidental payment terms in multiple languages
     forbidden = [
@@ -118,7 +122,7 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
     for term in forbidden:
         if term in cleaned.lower():
             templates = MULTILINGUAL_TEMPLATES.get(lang, MULTILINGUAL_TEMPLATES["en"])
-            cleaned = random.choice(templates).format(seller=seller_username, keyword=keyword)
+            cleaned = random.choice(templates).format(seller=seller_username.lstrip("@"), keyword=keyword)
             break
             
     if len(cleaned) > 238:
@@ -133,17 +137,23 @@ def evaluate_pair_rule_based(buyer: Tweet, seller: Tweet, keyword: str) -> Match
     seller_has_intent = any(k in seller_lower for k in SELLER_INTENT_KEYWORDS)
     
     kw_in_buyer = keyword.lower() in buyer_lower
-    kw_in_seller = keyword.lower() in seller_lower
     
-    confidence = 55
-    if kw_in_buyer and kw_in_seller:
-        confidence += 25
-    if buyer_has_intent:
-        confidence += 10
-    if seller_has_intent:
-        confidence += 10
+    # STRICT INTENT CHECK: If buyer doesn't have genuine buying intent, REJECT immediately!
+    if not buyer_has_intent or not kw_in_buyer:
+        return MatchEvaluation(
+            confidence=0,
+            reasoning=f"Rejected: Tweet contains '{keyword}' but lacks genuine ticket buying/selling intent.",
+            suggested_reply="",
+            is_match=False
+        )
+    
+    confidence = 75
+    if buyer_has_intent and seller_has_intent:
+        confidence += 15
+    if "2" in buyer_lower or "pair" in buyer_lower or "two" in buyer_lower:
+        confidence += 5
         
-    confidence = min(96, max(30, confidence))
+    confidence = min(95, max(0, confidence))
     
     lang = detect_tweet_language(buyer.text)
     templates = MULTILINGUAL_TEMPLATES.get(lang, MULTILINGUAL_TEMPLATES["en"])
@@ -152,15 +162,15 @@ def evaluate_pair_rule_based(buyer: Tweet, seller: Tweet, keyword: str) -> Match
     comment_text = clean_comment_text(comment_text, seller.author_username, keyword, buyer.author_username, lang=lang)
     
     reasoning = (
-        f"[Rule-Based Gemini Engine - {lang.upper()}] Detected buyer requesting '{keyword}' in language '{lang}'. "
-        f"Seller @{seller.author_username} promotes tickets at a discount. Formulating natural multilingual reply."
+        f"[Rule-Based Intent Engine - {lang.upper()}] Confirmed genuine ticket buyer intent for '{keyword}'. "
+        f"Promoting seller @{seller.author_username} with verified tag."
     )
 
     return MatchEvaluation(
         confidence=confidence,
         reasoning=reasoning,
         suggested_reply=comment_text,
-        is_match=confidence >= 40
+        is_match=confidence >= 50
     )
 
 def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvaluation, str]:
@@ -179,25 +189,22 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
         
         system_instruction = (
             "You are a sophisticated, multilingual Google Gemini AI Ticket Matchmaker for X (Twitter).\n"
-            "Analyze a potential Buyer tweet looking for tickets, and a Seller offering tickets for an event.\n\n"
-            "CRITICAL MULTILINGUAL & GEOLOCATION RULES:\n"
-            "1. DETECT THE BUYER'S LANGUAGE AND EVENT LOCATION: If the buyer writes in Spanish or the event is in a Spanish-speaking city (Madrid, Barcelona, CDMX, etc.), you MUST reply in natural, fluent Spanish.\n"
-            "   If French (Paris, Stade de France) -> reply in natural French.\n"
-            "   If German (Berlin, Munich, etc.) -> reply in natural German.\n"
-            "   If Italian (Milan, Rome) -> reply in natural Italian.\n"
-            "   If Portuguese (São Paulo, Lisbon) -> reply in natural Portuguese.\n"
-            "   Otherwise, reply in the exact detected language of the buyer's post!\n\n"
-            "CRITICAL COMMENT SAFETY RULES:\n"
-            "2. DO NOT INCLUDE THE BUYER'S USERNAME (@buyer) because this comment is published directly underneath the buyer's post as an in-reply-to comment! Do NOT write '@buyer'.\n"
-            "3. Mention ONLY the seller's handle (@seller_username) and state that they are selling tickets at a discount.\n"
-            "4. DO NOT INCLUDE ANY PAYMENT METHOD (NEVER mention PayPal, CashApp, Venmo, Bizum, wire, etc.).\n"
-            "5. EVERY COMMENT MUST BE UNIQUE, HUMAN-LIKE, AND DIFFERENT in the detected language.\n"
-            "6. Under 230 characters.\n\n"
+            "Analyze a tweet to determine if someone is GENUINELY trying to BUY tickets for an event, and formulate a reply promoting the seller.\n\n"
+            "CRITICAL INTENT VERIFICATION RULE:\n"
+            "1. STRICT BUYER INTENT: The tweet author MUST be an actual person looking to BUY, find, or get tickets for the event (e.g., 'need 2 tickets', 'who is selling', 'wtb').\n"
+            "   If the tweet is just casual conversation, memes, lyrics, general excitement ('I love Coldplay'), news, or non-commercial chatter, you MUST return confidence: 0 and NO suggested reply!\n\n"
+            "CRITICAL TAGGING & COMMENT RULES:\n"
+            "2. YOU MUST ALWAYS TAG THE SELLER (@seller_username) IN THE COMMENT! Example: 'Reach out to @{seller}, they have extra tickets available.'\n"
+            "3. DO NOT INCLUDE THE BUYER'S USERNAME (@buyer) because this is a direct in-reply-to comment under their tweet.\n"
+            "4. NEVER MENTION PAYMENT METHODS (PayPal, CashApp, Venmo, Zelle, Bizum, wire, etc.).\n"
+            "5. FLUENT NATIVE LANGUAGE: Match the buyer's language/locale (Spanish, French, German, Italian, Portuguese, English).\n"
+            "6. Under 230 characters, friendly, natural human phrasing.\n\n"
             "Output JSON with keys:\n"
-            "- 'language': detected language (e.g. 'en', 'es', 'fr', 'de')\n"
-            "- 'confidence': integer (0-100)\n"
-            "- 'reasoning': concise explanation of match compatibility & detected location/language\n"
-            "- 'suggested_reply': human-like comment in the native language mentioning @seller_username (NO @buyer tag, NO payment methods)."
+            "- 'is_buyer': boolean (true only if explicitly seeking tickets)\n"
+            "- 'language': detected language code (e.g. 'en', 'es', 'fr', 'de')\n"
+            "- 'confidence': integer (0-100; MUST be 0 if not genuinely seeking tickets)\n"
+            "- 'reasoning': concise explanation of intent verification\n"
+            "- 'suggested_reply': comment tagging @seller_username (empty string if confidence is 0)."
         )
         
         user_content = (
