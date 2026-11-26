@@ -153,7 +153,7 @@ class XGraphQLClient:
 
     def search_tweets(self, query: str, count: int = 20) -> List[Dict[str, Any]]:
         """Search tweets via X's internal GraphQL SearchTimeline endpoint.
-        Tries multiple known queryIds and auto-discovers the live one if all fail."""
+        Uses POST request as required by X's web application bundle."""
         global _cached_search_qid
 
         variables = {
@@ -163,37 +163,41 @@ class XGraphQLClient:
             "product": "Latest",
         }
         features = {
-            "rweb_tipjar_consumption_enabled": True,
-            "responsive_web_graphql_exclude_directive_enabled": True,
+            "rweb_video_screen_enabled": False,
+            "rweb_cashtags_enabled": True,
+            "profile_label_improvements_pcf_label_in_post_enabled": True,
+            "responsive_web_profile_redirect_enabled": False,
+            "rweb_tipjar_consumption_enabled": False,
             "verified_phone_label_enabled": False,
             "creator_subscriptions_tweet_preview_api_enabled": True,
             "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "premium_content_api_read_enabled": False,
             "communities_web_enable_tweet_community_results_fetch": True,
             "c9s_tweet_anatomy_moderator_badge_enabled": True,
+            "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+            "responsive_web_grok_analyze_post_followups_enabled": True,
+            "responsive_web_jetfuel_frame": True,
+            "responsive_web_grok_share_attachment_enabled": True,
+            "responsive_web_grok_annotations_enabled": True,
             "articles_preview_enabled": True,
             "responsive_web_edit_tweet_api_enabled": True,
             "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
             "view_counts_everywhere_api_enabled": True,
             "longform_notetweets_consumption_enabled": True,
             "responsive_web_twitter_article_tweet_consumption_enabled": True,
-            "tweet_awards_web_tipping_enabled": False,
-            "creator_subscriptions_quote_tweet_preview_enabled": False,
+            "content_disclosure_indicator_enabled": True,
+            "content_disclosure_ai_generated_indicator_enabled": True,
+            "responsive_web_grok_show_grok_translated_post": True,
+            "responsive_web_grok_analysis_button_from_backend": True,
+            "post_ctas_fetch_enabled": True,
             "freedom_of_speech_not_reach_fetch_enabled": True,
             "standardized_nudges_misinfo": True,
             "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-            "rweb_video_timestamps_enabled": True,
             "longform_notetweets_rich_text_read_enabled": True,
-            "longform_notetweets_inline_media_enabled": True,
+            "longform_notetweets_inline_media_enabled": False,
             "responsive_web_enhance_cards_enabled": False,
         }
 
-        params = {
-            "variables": json.dumps(variables, separators=(',', ':')),
-            "features": json.dumps(features, separators=(',', ':')),
-        }
-
-        # Build ordered list of queryIds to try: cached first, then known list, then live-fetched
         qids_to_try = []
         if _cached_search_qid:
             qids_to_try.append(_cached_search_qid)
@@ -203,53 +207,38 @@ class XGraphQLClient:
 
         last_error = None
         for qid in qids_to_try:
-            for host in ["x.com", "twitter.com"]:
-                url = f"https://{host}/i/api/graphql/{qid}/SearchTimeline"
-                try:
-                    resp = self._session.get(url, params=params, timeout=30)
-                    if resp.status_code == 403:
-                        self._refresh_headers()
-                        resp = self._session.get(url, params=params, timeout=30)
-                    if resp.status_code == 404:
-                        logger.warning(f"SearchTimeline {host} queryId {qid} returned 404, trying next.")
-                        last_error = f"HTTP 404 for queryId {qid} on {host}"
-                        continue
-                    resp.raise_for_status()
-                    data = resp.json()
-                    results = self._parse_search_results(data)
-                    _cached_search_qid = qid  # cache successful qid
-                    return results
-                except RuntimeError:
-                    raise
-                except requests.exceptions.HTTPError as e:
-                    status = e.response.status_code if e.response is not None else "?"
-                    if status == 404:
-                        last_error = f"HTTP 404 for queryId {qid} on {host}"
-                        continue
-                    raise RuntimeError(f"X GraphQL search HTTP {status}: {e}")
-                except Exception as e:
-                    last_error = str(e)
+            payload = {
+                "variables": variables,
+                "features": features,
+                "queryId": qid,
+            }
+            url = f"https://x.com/i/api/graphql/{qid}/SearchTimeline"
+            try:
+                resp = self._session.post(url, json=payload, timeout=25)
+                if resp.status_code == 403:
+                    self._refresh_headers()
+                    resp = self._session.post(url, json=payload, timeout=25)
+                if resp.status_code == 404:
+                    last_error = f"HTTP 404 for queryId {qid}"
                     continue
-
-        # All known IDs failed — try to discover live queryId from x.com bundle
-        logger.warning("All known SearchTimeline queryIds failed; attempting live discovery...")
-        live_qid = _fetch_live_query_id("SearchTimeline")
-        if live_qid and live_qid not in qids_to_try:
-            for host in ["x.com", "twitter.com"]:
-                url = f"https://{host}/i/api/graphql/{live_qid}/SearchTimeline"
-                try:
-                    resp = self._session.get(url, params=params, timeout=30)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    results = self._parse_search_results(data)
-                    _cached_search_qid = live_qid
-                    logger.info(f"Live-discovered SearchTimeline queryId: {live_qid}")
-                    return results
-                except Exception as e:
-                    last_error = str(e)
+                resp.raise_for_status()
+                data = resp.json()
+                results = self._parse_search_results(data)
+                _cached_search_qid = qid
+                return results
+            except RuntimeError:
+                raise
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else "?"
+                if status == 404:
+                    last_error = f"HTTP 404 for queryId {qid}"
                     continue
+                raise RuntimeError(f"X GraphQL search HTTP {status}: {e}")
+            except Exception as e:
+                last_error = str(e)
+                continue
 
-        raise RuntimeError(f"X GraphQL search failed — all queryIds returned 404. X may have rotated them. Last: {last_error}")
+        raise RuntimeError(f"X GraphQL search failed. Last: {last_error}")
 
     def _parse_search_results(self, data: Dict) -> List[Dict[str, Any]]:
         """Extract tweet objects from SearchTimeline GraphQL response."""
