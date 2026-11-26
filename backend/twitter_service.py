@@ -43,6 +43,8 @@ class TwitterService:
         # Smart Auto-Detection: If user pasted OAuth 2.0 Client ID into API Key field
         self._normalize_credentials()
         self._client: Optional[tweepy.Client] = None
+        self._search_client: Optional[tweepy.Client] = None
+        self._is_oauth2: bool = False
         self._init_client()
 
     def _normalize_credentials(self):
@@ -57,12 +59,11 @@ class TwitterService:
 
     def _init_client(self):
         self._is_oauth2 = bool(self.access_token and not self.api_key)
-        effective_bearer = self.bearer_token or (self.access_token if self._is_oauth2 else "")
 
-        if self._is_oauth2 and effective_bearer:
+        if self._is_oauth2 and self.access_token:
             try:
                 self._client = tweepy.Client(
-                    bearer_token=effective_bearer,
+                    bearer_token=self.access_token,
                     wait_on_rate_limit=True
                 )
                 logger.info("Live Tweepy Client initialized (OAuth 2.0 User Context).")
@@ -85,6 +86,17 @@ class TwitterService:
                 self._client = None
         else:
             self._client = None
+
+        if self.bearer_token:
+            try:
+                self._search_client = tweepy.Client(
+                    bearer_token=self.bearer_token,
+                    wait_on_rate_limit=True
+                )
+            except Exception:
+                self._search_client = self._client
+        else:
+            self._search_client = self._client
 
     def reload_credentials(
         self,
@@ -232,8 +244,9 @@ class TwitterService:
         )
         try:
             logger.info(f"Searching live X for buyers: {query}")
+            client = self._search_client or self._client
             use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
-            response = self._client.search_recent_tweets(
+            response = client.search_recent_tweets(
                 query=query,
                 max_results=min(max(count, 10), 50),
                 tweet_fields=["created_at", "author_id", "text"],
@@ -261,10 +274,36 @@ class TwitterService:
             return tweets
         except tweepy.errors.TweepyException as te:
             logger.error(f"Tweepy buyer search error: {te}")
-            raise RuntimeError(f"X API Search Error: {te}")
+            raise RuntimeError(self._format_search_error(te))
         except Exception as e:
             logger.error(f"Unexpected error searching X buyers: {e}")
             raise RuntimeError(f"Failed to query X for buyers: {e}")
+
+    def _format_search_error(self, te: Exception) -> str:
+        err_str = str(te)
+        if "401" in err_str or "403" in err_str:
+            # Check if OAuth 2.0 user token itself is valid via get_me()
+            user_valid = False
+            try:
+                if self._client:
+                    me = self._client.get_me(user_auth=not getattr(self, "_is_oauth2", False))
+                    if me and me.data:
+                        user_valid = True
+            except Exception:
+                pass
+
+            if user_valid:
+                return (
+                    f"X API Search blocked ({err_str}). Your @account OAuth 2.0 login IS valid, "
+                    "but X's Free Developer tier does NOT include Tweet Search (/2/tweets/search/recent). "
+                    "To enable live search: upgrade to X API Basic in developer.x.com OR paste your App Bearer Token in Settings -> Tab 3 (Direct Tokens)."
+                )
+            elif not self.bearer_token:
+                return (
+                    f"X API Search Error ({err_str}). Try pasting your App Bearer Token in Settings -> Tab 3 (Direct Tokens) "
+                    "or ensure your X Developer Portal project is on Basic tier (Free tier blocks Search API)."
+                )
+        return f"X API Search Error: {err_str}"
 
     def search_sellers(self, keyword: str, count: int = 10) -> List[Tweet]:
         if not self._client:
@@ -279,8 +318,9 @@ class TwitterService:
         )
         try:
             logger.info(f"Searching live X for sellers: {query}")
+            client = self._search_client or self._client
             use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
-            response = self._client.search_recent_tweets(
+            response = client.search_recent_tweets(
                 query=query,
                 max_results=min(max(count, 10), 50),
                 tweet_fields=["created_at", "author_id", "text"],
@@ -308,7 +348,7 @@ class TwitterService:
             return tweets
         except tweepy.errors.TweepyException as te:
             logger.error(f"Tweepy seller search error: {te}")
-            raise RuntimeError(f"X API Search Error: {te}")
+            raise RuntimeError(self._format_search_error(te))
         except Exception as e:
             logger.error(f"Unexpected error searching X sellers: {e}")
             raise RuntimeError(f"Failed to query X for sellers: {e}")
