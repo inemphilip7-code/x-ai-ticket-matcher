@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+tweepy==4.14.0
+openai==1.51.0
+httpx<0.28
+requests>=2.31.0
+pydantic==2.9.2
+python-dotenv==1.0.1
+truststore==0.10.5
+certifi>=2024.0.0
