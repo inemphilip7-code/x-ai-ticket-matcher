@@ -186,7 +186,7 @@ def twitter_oauth_callback(
         # OAuth 2.0 flow
         if code:
             full_url = str(request.url)
-            tokens = twitter_service.exchange_oauth2_callback(full_url)
+            tokens = twitter_service.exchange_oauth2_callback(full_url, state=state)
             access_token = tokens["access_token"]
             refresh_token = tokens.get("access_token_secret", "")
             

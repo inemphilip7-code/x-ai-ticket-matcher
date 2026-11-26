@@ -2,6 +2,9 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 
+# Allow OAuth 2.0 PKCE over http:// for local development
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
 # Inject operating system certificate store for Windows/Mac SSL verification
 try:
     import truststore
@@ -36,8 +39,21 @@ class TwitterService:
         self.access_token = os.getenv("TWITTER_ACCESS_TOKEN", "").strip()
         self.access_token_secret = os.getenv("TWITTER_ACCESS_TOKEN_SECRET", "").strip()
         self.bearer_token = os.getenv("TWITTER_BEARER_TOKEN", "").strip()
+
+        # Smart Auto-Detection: If user pasted OAuth 2.0 Client ID into API Key field
+        self._normalize_credentials()
         self._client: Optional[tweepy.Client] = None
         self._init_client()
+
+    def _normalize_credentials(self):
+        """Auto-detects if an OAuth 2.0 Client ID was entered into API Key field."""
+        if not self.client_id and self.api_key and (":" in self.api_key or self.api_key.endswith(":ci") or len(self.api_key) > 30):
+            logger.info("Auto-detected OAuth 2.0 Client ID passed in API Key field! Promoting to client_id.")
+            self.client_id = self.api_key
+            if not self.client_secret and self.api_secret:
+                self.client_secret = self.api_secret
+            self.api_key = ""
+            self.api_secret = ""
 
     def _init_client(self):
         if (self.api_key and self.access_token) or self.bearer_token or self.access_token:
@@ -74,6 +90,7 @@ class TwitterService:
         if bearer_token: self.bearer_token = bearer_token.strip()
         if client_id: self.client_id = client_id.strip()
         if client_secret: self.client_secret = client_secret.strip()
+        self._normalize_credentials()
         self._init_client()
 
     def is_configured(self) -> bool:
@@ -136,10 +153,31 @@ class TwitterService:
             "To connect with 𝕏, please enter your Client ID (or API Key & Secret) in Settings first, then click Connect."
         )
 
-    def exchange_oauth2_callback(self, full_redirect_url: str) -> Dict[str, str]:
-        handler = _oauth2_handlers.get("latest")
+    def exchange_oauth2_callback(self, full_redirect_url: str, state: Optional[str] = None) -> Dict[str, str]:
+        handler = None
+        if state and state in _oauth2_handlers:
+            handler = _oauth2_handlers[state]
+        if not handler:
+            handler = _oauth2_handlers.get("latest")
+            
+        if not handler and self.client_id:
+            # Resilient fallback: reconstruct handler if server restarted
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(full_redirect_url)
+                base_callback = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                handler = tweepy.OAuth2UserHandler(
+                    client_id=self.client_id,
+                    redirect_uri=base_callback,
+                    scope=["tweet.read", "tweet.write", "users.read", "offline.access"],
+                    client_secret=self.client_secret or None
+                )
+            except Exception as e:
+                logger.warning(f"Failed to reconstruct OAuth2 handler: {e}")
+
         if not handler:
             raise RuntimeError("OAuth2 session expired. Please click 'Connect with 𝕏' again.")
+            
         token_data = handler.fetch_token(full_redirect_url)
         access_token = token_data.get("access_token", "")
         refresh_token = token_data.get("refresh_token", "")
