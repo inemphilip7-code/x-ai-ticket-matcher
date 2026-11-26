@@ -56,7 +56,20 @@ class TwitterService:
             self.api_secret = ""
 
     def _init_client(self):
-        if (self.api_key and self.access_token) or self.bearer_token or self.access_token:
+        self._is_oauth2 = bool(self.access_token and not self.api_key)
+        effective_bearer = self.bearer_token or (self.access_token if self._is_oauth2 else "")
+
+        if self._is_oauth2 and effective_bearer:
+            try:
+                self._client = tweepy.Client(
+                    bearer_token=effective_bearer,
+                    wait_on_rate_limit=True
+                )
+                logger.info("Live Tweepy Client initialized (OAuth 2.0 User Context).")
+            except Exception as e:
+                logger.error(f"Failed to initialize OAuth 2.0 Tweepy Client: {e}")
+                self._client = None
+        elif (self.api_key and self.access_token) or self.bearer_token or self.access_token:
             try:
                 self._client = tweepy.Client(
                     bearer_token=self.bearer_token or None,
@@ -66,7 +79,7 @@ class TwitterService:
                     access_token_secret=self.access_token_secret or None,
                     wait_on_rate_limit=True
                 )
-                logger.info("Live Tweepy Client initialized.")
+                logger.info("Live Tweepy Client initialized (OAuth 1.0a / Bearer).")
             except Exception as e:
                 logger.error(f"Failed to initialize Tweepy Client: {e}")
                 self._client = None
@@ -219,12 +232,14 @@ class TwitterService:
         )
         try:
             logger.info(f"Searching live X for buyers: {query}")
+            use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
             response = self._client.search_recent_tweets(
                 query=query,
                 max_results=min(max(count, 10), 50),
                 tweet_fields=["created_at", "author_id", "text"],
                 expansions=["author_id"],
-                user_fields=["username", "name"]
+                user_fields=["username", "name"],
+                user_auth=use_oauth1
             )
             if not response or not response.data:
                 return []
@@ -264,12 +279,14 @@ class TwitterService:
         )
         try:
             logger.info(f"Searching live X for sellers: {query}")
+            use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
             response = self._client.search_recent_tweets(
                 query=query,
                 max_results=min(max(count, 10), 50),
                 tweet_fields=["created_at", "author_id", "text"],
                 expansions=["author_id"],
-                user_fields=["username", "name"]
+                user_fields=["username", "name"],
+                user_auth=use_oauth1
             )
             if not response or not response.data:
                 return []
@@ -323,7 +340,8 @@ class TwitterService:
             logger.info(f"Posting direct comment on buyer tweet ID {buyer_tweet_id}: {formatted_comment}")
             res = self._client.create_tweet(
                 text=formatted_comment,
-                in_reply_to_tweet_id=int(buyer_tweet_id)
+                in_reply_to_tweet_id=int(buyer_tweet_id),
+                user_auth=not getattr(self, "_is_oauth2", False)
             )
             tweet_id = str(res.data["id"])
             return {
