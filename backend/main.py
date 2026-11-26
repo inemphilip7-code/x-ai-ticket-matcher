@@ -431,6 +431,12 @@ def update_credentials(req: ConfigUpdateRequest):
     if req.twitter_bearer_token is not None:
         os.environ["TWITTER_BEARER_TOKEN"] = req.twitter_bearer_token
         set_key(env_path, "TWITTER_BEARER_TOKEN", req.twitter_bearer_token)
+    if req.twitter_auth_token is not None:
+        os.environ["TWITTER_AUTH_TOKEN"] = req.twitter_auth_token
+        set_key(env_path, "TWITTER_AUTH_TOKEN", req.twitter_auth_token)
+    if req.twitter_ct0 is not None:
+        os.environ["TWITTER_CT0"] = req.twitter_ct0
+        set_key(env_path, "TWITTER_CT0", req.twitter_ct0)
     if req.gemini_api_key is not None:
         os.environ["GEMINI_API_KEY"] = req.gemini_api_key
         set_key(env_path, "GEMINI_API_KEY", req.gemini_api_key)
@@ -459,7 +465,9 @@ def update_credentials(req: ConfigUpdateRequest):
         access_token_secret=os.environ.get("TWITTER_ACCESS_TOKEN_SECRET", ""),
         bearer_token=os.environ.get("TWITTER_BEARER_TOKEN", ""),
         client_id=os.environ.get("TWITTER_CLIENT_ID", ""),
-        client_secret=os.environ.get("TWITTER_CLIENT_SECRET", "")
+        client_secret=os.environ.get("TWITTER_CLIENT_SECRET", ""),
+        auth_token=os.environ.get("TWITTER_AUTH_TOKEN", ""),
+        ct0=os.environ.get("TWITTER_CT0", "")
     )
     
     if req.auto_scan_interval or req.auto_post_threshold:

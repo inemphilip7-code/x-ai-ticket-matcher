@@ -58,6 +58,7 @@ export interface SystemStatus {
   credentials: {
     has_bearer_token: boolean;
     has_client_id?: boolean;
+    has_twikit_cookies?: boolean;
     has_api_key: boolean;
     has_api_secret: boolean;
     has_access_token: boolean;

@@ -23,6 +23,8 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
   const [bearerToken, setBearerToken] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [accessTokenSecret, setAccessTokenSecret] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [ct0, setCt0] = useState('');
   
   // Gemini AI state
   const [geminiKey, setGeminiKey] = useState('');
@@ -85,6 +87,8 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
       if (bearerToken.trim()) payload.twitter_bearer_token = bearerToken.trim();
       if (accessToken.trim()) payload.twitter_access_token = accessToken.trim();
       if (accessTokenSecret.trim()) payload.twitter_access_token_secret = accessTokenSecret.trim();
+      if (authToken.trim()) payload.twitter_auth_token = authToken.trim();
+      if (ct0.trim()) payload.twitter_ct0 = ct0.trim();
       if (geminiKey.trim()) payload.gemini_api_key = geminiKey.trim();
       if (geminiFallbackKey.trim()) payload.gemini_api_key_fallback = geminiFallbackKey.trim();
       if (geminiModel.trim()) payload.gemini_model = geminiModel.trim();
@@ -163,7 +167,7 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
                 : 'border-transparent text-slate-400 hover:text-white'
             }`}
           >
-            3. Direct Tokens
+            3. Free Cookies / Tokens
           </button>
           <button
             type="button"
@@ -317,13 +321,51 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
           </div>
         )}
 
-        {/* TAB 3: Direct Manual Tokens */}
+        {/* TAB 3: Free Twikit Cookies & Direct Manual Tokens */}
         {activeTab === 'direct' && (
           <form onSubmit={handleSubmitManual} className="mt-4 space-y-3">
+            <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/50 via-[#101c1a] to-[#0c1320] border border-emerald-500/30 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-emerald-300 font-bold">Free 𝕏 Search & Reply (Twikit Cookies — $0 Credits)</span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
+                  Free Alternative
+                </span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                Bypasses X API credit limits! Open <strong>x.com</strong> (logged into your X account) &rarr; press <strong>F12</strong> &rarr; <strong>Application</strong> &rarr; <strong>Cookies</strong> &rarr; <strong>https://x.com</strong> &rarr; copy <code>auth_token</code> and <code>ct0</code>:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-200 mb-1">
+                    auth_token Cookie
+                  </label>
+                  <input
+                    type="password"
+                    value={authToken}
+                    onChange={(e) => setAuthToken(e.target.value)}
+                    placeholder={status?.credentials.has_twikit_cookies ? '•••••••••••• (Active)' : 'Paste auth_token...'}
+                    className="w-full px-3.5 py-2 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-200 mb-1">
+                    ct0 Cookie
+                  </label>
+                  <input
+                    type="password"
+                    value={ct0}
+                    onChange={(e) => setCt0(e.target.value)}
+                    placeholder={status?.credentials.has_twikit_cookies ? '•••••••••••• (Active)' : 'Paste ct0...'}
+                    className="w-full px-3.5 py-2 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="p-3.5 rounded-xl bg-[#141924] border border-slate-800 text-xs space-y-1">
-              <span className="text-slate-200 font-bold">Already generated tokens manually?</span>
+              <span className="text-slate-200 font-bold">Optional: Official X Developer Tokens</span>
               <p className="text-slate-400 text-[11px]">
-                Under <strong>Keys and Tokens</strong> on developer.x.com, you can directly generate your Bearer Token and User Access Token & Secret, and paste them here without using the Connect button:
+                Under <strong>Keys and Tokens</strong> on developer.x.com, you can also paste your Bearer Token or Access Token:
               </p>
             </div>
 

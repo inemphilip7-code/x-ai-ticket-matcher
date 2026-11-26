@@ -90,6 +90,8 @@ class ConfigUpdateRequest(BaseModel):
     twitter_access_token: Optional[str] = None
     twitter_access_token_secret: Optional[str] = None
     twitter_bearer_token: Optional[str] = None
+    twitter_auth_token: Optional[str] = None
+    twitter_ct0: Optional[str] = None
     gemini_api_key: Optional[str] = None
     gemini_api_key_fallback: Optional[str] = None
     gemini_model: Optional[str] = None

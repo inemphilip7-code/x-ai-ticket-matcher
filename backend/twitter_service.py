@@ -1,5 +1,7 @@
 import os
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
 
 # Allow OAuth 2.0 PKCE over http:// for local development
@@ -22,6 +24,10 @@ except Exception:
     pass
 
 import tweepy
+try:
+    from twikit import Client as TwikitClient
+except Exception:
+    TwikitClient = None
 from models import Tweet
 
 logger = logging.getLogger("twitter_service")
@@ -39,11 +45,14 @@ class TwitterService:
         self.access_token = os.getenv("TWITTER_ACCESS_TOKEN", "").strip()
         self.access_token_secret = os.getenv("TWITTER_ACCESS_TOKEN_SECRET", "").strip()
         self.bearer_token = os.getenv("TWITTER_BEARER_TOKEN", "").strip()
+        self.auth_token = os.getenv("TWITTER_AUTH_TOKEN", "").strip()
+        self.ct0 = os.getenv("TWITTER_CT0", "").strip()
 
         # Smart Auto-Detection: If user pasted OAuth 2.0 Client ID into API Key field
         self._normalize_credentials()
         self._client: Optional[tweepy.Client] = None
         self._search_client: Optional[tweepy.Client] = None
+        self._twikit_client: Optional[Any] = None
         self._is_oauth2: bool = False
         self._init_client()
 
@@ -98,6 +107,18 @@ class TwitterService:
         else:
             self._search_client = self._client
 
+        if TwikitClient and self.auth_token and self.ct0:
+            try:
+                tc = TwikitClient("en-US")
+                tc.set_cookies({"auth_token": self.auth_token, "ct0": self.ct0})
+                self._twikit_client = tc
+                logger.info("Free Twikit cookie client initialized.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Twikit client: {e}")
+                self._twikit_client = None
+        else:
+            self._twikit_client = None
+
     def reload_credentials(
         self,
         api_key: str = "",
@@ -106,7 +127,9 @@ class TwitterService:
         access_token_secret: str = "",
         bearer_token: str = "",
         client_id: str = "",
-        client_secret: str = ""
+        client_secret: str = "",
+        auth_token: str = "",
+        ct0: str = ""
     ):
         if api_key: self.api_key = api_key.strip()
         if api_secret: self.api_secret = api_secret.strip()
@@ -115,13 +138,18 @@ class TwitterService:
         if bearer_token: self.bearer_token = bearer_token.strip()
         if client_id: self.client_id = client_id.strip()
         if client_secret: self.client_secret = client_secret.strip()
+        if auth_token: self.auth_token = auth_token.strip()
+        if ct0: self.ct0 = ct0.strip()
         self._normalize_credentials()
         self._init_client()
 
     def is_configured(self) -> bool:
-        return self._client is not None and bool(self.access_token or self.bearer_token)
+        has_official = self._client is not None and bool(self.access_token or self.bearer_token)
+        has_twikit = self._twikit_client is not None
+        return has_official or has_twikit
 
     def get_credential_status(self) -> Dict[str, Any]:
+        has_twikit = self._twikit_client is not None
         return {
             "has_bearer_token": bool(self.bearer_token),
             "has_client_id": bool(self.client_id),
@@ -129,8 +157,9 @@ class TwitterService:
             "has_api_secret": bool(self.api_secret),
             "has_access_token": bool(self.access_token),
             "has_access_token_secret": bool(self.access_token_secret),
-            "can_search": bool(self.bearer_token or self.api_key or self.access_token),
-            "can_comment": bool(self.access_token)
+            "has_twikit_cookies": has_twikit,
+            "can_search": bool(self.bearer_token or self.api_key or self.access_token or has_twikit),
+            "can_comment": bool(self.access_token or has_twikit)
         }
 
     # --- Dual OAuth Connect: OAuth 2.0 PKCE or OAuth 1.0a ---
@@ -229,10 +258,55 @@ class TwitterService:
             "access_token_secret": access_token_secret
         }
 
+    def _run_coro(self, coro):
+        """Safely runs an async twikit coroutine from sync or FastAPI threadpool contexts."""
+        try:
+            asyncio.get_running_loop()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result()
+        except RuntimeError:
+            return asyncio.run(coro)
+
+    def _twikit_search(self, query: str, role: str, count: int = 10) -> List[Tweet]:
+        if not self._twikit_client:
+            raise RuntimeError("Free Twikit cookies (auth_token + ct0) not configured.")
+        async def _do():
+            results = await self._twikit_client.search_tweet(query, product="Latest", count=min(max(count, 10), 40))
+            tweets = []
+            for t in (results or []):
+                uname = getattr(getattr(t, "user", None), "screen_name", None) or "unknown"
+                name = getattr(getattr(t, "user", None), "name", None) or uname
+                created = str(getattr(t, "created_at", "") or "")
+                tweets.append(Tweet(
+                    id=str(t.id),
+                    text=str(t.text or ""),
+                    author_username=uname,
+                    author_name=name,
+                    created_at=created,
+                    role=role
+                ))
+            return tweets
+        logger.info(f"Using FREE Twikit search ({role}): {query}")
+        return self._run_coro(_do())
+
+    def _twikit_reply(self, formatted_comment: str, buyer_tweet_id: str, buyer_username: str) -> Dict[str, Any]:
+        if not self._twikit_client:
+            raise RuntimeError("Free Twikit cookies (auth_token + ct0) not configured.")
+        async def _do():
+            res = await self._twikit_client.create_tweet(text=formatted_comment, reply_to=str(buyer_tweet_id))
+            return str(res.id)
+        tweet_id = self._run_coro(_do())
+        return {
+            "success": True,
+            "post_type": "comment",
+            "tweet_id": tweet_id,
+            "message": f"Successfully commented directly on @{buyer_username}'s tweet via Twikit! (Tweet ID: {tweet_id})"
+        }
+
     # --- Live Search with Targeted Intent Phrases ---
     def search_buyers(self, keyword: str, count: int = 10) -> List[Tweet]:
-        if not self._client:
-            raise RuntimeError("X API client not configured. Connect your X account or enter keys in Settings.")
+        if not self._client and not self._twikit_client:
+            raise RuntimeError("X client not configured. Connect your X account or add Twikit cookies in Settings.")
 
         # Multilingual buyer search query (English, Spanish, French, German, Italian, Portuguese)
         query = (
@@ -242,42 +316,56 @@ class TwitterService:
             f'"suche ticket" OR "suche karte" OR "cerco biglietto" OR "procuro ingresso") '
             f'-is:retweet -is:reply'
         )
-        try:
-            logger.info(f"Searching live X for buyers: {query}")
-            client = self._search_client or self._client
-            use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
-            response = client.search_recent_tweets(
-                query=query,
-                max_results=min(max(count, 10), 50),
-                tweet_fields=["created_at", "author_id", "text"],
-                expansions=["author_id"],
-                user_fields=["username", "name"],
-                user_auth=use_oauth1
-            )
-            if not response or not response.data:
-                return []
-            users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
-            tweets = []
-            for t in response.data:
-                user = users_map.get(t.author_id)
-                uname = user.username if user else f"user_{t.author_id}"
-                name = user.name if user else uname
-                created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
-                tweets.append(Tweet(
-                    id=str(t.id),
-                    text=t.text,
-                    author_username=uname,
-                    author_name=name,
-                    created_at=created,
-                    role="buyer"
-                ))
-            return tweets
-        except tweepy.errors.TweepyException as te:
-            logger.error(f"Tweepy buyer search error: {te}")
-            raise RuntimeError(self._format_search_error(te))
-        except Exception as e:
-            logger.error(f"Unexpected error searching X buyers: {e}")
-            raise RuntimeError(f"Failed to query X for buyers: {e}")
+        client = self._search_client or self._client
+        if client:
+            try:
+                logger.info(f"Searching live X for buyers: {query}")
+                use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
+                response = client.search_recent_tweets(
+                    query=query,
+                    max_results=min(max(count, 10), 50),
+                    tweet_fields=["created_at", "author_id", "text"],
+                    expansions=["author_id"],
+                    user_fields=["username", "name"],
+                    user_auth=use_oauth1
+                )
+                if not response or not response.data:
+                    return []
+                users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
+                tweets = []
+                for t in response.data:
+                    user = users_map.get(t.author_id)
+                    uname = user.username if user else f"user_{t.author_id}"
+                    name = user.name if user else uname
+                    created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
+                    tweets.append(Tweet(
+                        id=str(t.id),
+                        text=t.text,
+                        author_username=uname,
+                        author_name=name,
+                        created_at=created,
+                        role="buyer"
+                    ))
+                return tweets
+            except tweepy.errors.TweepyException as te:
+                err_str = str(te)
+                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X search unavailable ({err_str}); falling back to FREE Twikit search.")
+                else:
+                    logger.error(f"Tweepy buyer search error: {te}")
+                    raise RuntimeError(self._format_search_error(te))
+            except Exception as e:
+                if not self._twikit_client:
+                    logger.error(f"Unexpected error searching X buyers: {e}")
+                    raise RuntimeError(f"Failed to query X for buyers: {e}")
+
+        if self._twikit_client:
+            try:
+                return self._twikit_search(query, "buyer", count)
+            except Exception as e:
+                logger.error(f"Twikit buyer search error: {e}")
+                raise RuntimeError(f"Free Twikit search error: {e}")
+        return []
 
     def _format_search_error(self, te: Exception) -> str:
         err_str = str(te)
@@ -306,8 +394,8 @@ class TwitterService:
         return f"X API Search Error: {err_str}"
 
     def search_sellers(self, keyword: str, count: int = 10) -> List[Tweet]:
-        if not self._client:
-            raise RuntimeError("X API client not configured. Connect your X account or enter keys in Settings.")
+        if not self._client and not self._twikit_client:
+            raise RuntimeError("X client not configured. Connect your X account or add Twikit cookies in Settings.")
 
         # Multilingual seller search query (English, Spanish, French, German, Italian, Portuguese)
         query = (
@@ -316,42 +404,56 @@ class TwitterService:
             f'"vendo entrada" OR "vendo boleta" OR "vends place" OR "verkaufe ticket" OR "vendo biglietto" OR "vendo ingresso") '
             f'-is:retweet -is:reply'
         )
-        try:
-            logger.info(f"Searching live X for sellers: {query}")
-            client = self._search_client or self._client
-            use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
-            response = client.search_recent_tweets(
-                query=query,
-                max_results=min(max(count, 10), 50),
-                tweet_fields=["created_at", "author_id", "text"],
-                expansions=["author_id"],
-                user_fields=["username", "name"],
-                user_auth=use_oauth1
-            )
-            if not response or not response.data:
-                return []
-            users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
-            tweets = []
-            for t in response.data:
-                user = users_map.get(t.author_id)
-                uname = user.username if user else f"user_{t.author_id}"
-                name = user.name if user else uname
-                created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
-                tweets.append(Tweet(
-                    id=str(t.id),
-                    text=t.text,
-                    author_username=uname,
-                    author_name=name,
-                    created_at=created,
-                    role="seller"
-                ))
-            return tweets
-        except tweepy.errors.TweepyException as te:
-            logger.error(f"Tweepy seller search error: {te}")
-            raise RuntimeError(self._format_search_error(te))
-        except Exception as e:
-            logger.error(f"Unexpected error searching X sellers: {e}")
-            raise RuntimeError(f"Failed to query X for sellers: {e}")
+        client = self._search_client or self._client
+        if client:
+            try:
+                logger.info(f"Searching live X for sellers: {query}")
+                use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
+                response = client.search_recent_tweets(
+                    query=query,
+                    max_results=min(max(count, 10), 50),
+                    tweet_fields=["created_at", "author_id", "text"],
+                    expansions=["author_id"],
+                    user_fields=["username", "name"],
+                    user_auth=use_oauth1
+                )
+                if not response or not response.data:
+                    return []
+                users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
+                tweets = []
+                for t in response.data:
+                    user = users_map.get(t.author_id)
+                    uname = user.username if user else f"user_{t.author_id}"
+                    name = user.name if user else uname
+                    created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
+                    tweets.append(Tweet(
+                        id=str(t.id),
+                        text=t.text,
+                        author_username=uname,
+                        author_name=name,
+                        created_at=created,
+                        role="seller"
+                    ))
+                return tweets
+            except tweepy.errors.TweepyException as te:
+                err_str = str(te)
+                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X seller search unavailable ({err_str}); falling back to FREE Twikit search.")
+                else:
+                    logger.error(f"Tweepy seller search error: {te}")
+                    raise RuntimeError(self._format_search_error(te))
+            except Exception as e:
+                if not self._twikit_client:
+                    logger.error(f"Unexpected error searching X sellers: {e}")
+                    raise RuntimeError(f"Failed to query X for sellers: {e}")
+
+        if self._twikit_client:
+            try:
+                return self._twikit_search(query, "seller", count)
+            except Exception as e:
+                logger.error(f"Twikit seller search error: {e}")
+                raise RuntimeError(f"Free Twikit search error: {e}")
+        return []
 
     # --- Comment Directly on Buyer's Tweet ---
     def post_comment_on_buyer_tweet(
@@ -362,9 +464,9 @@ class TwitterService:
         seller_username: str,
         event_keyword: str
     ) -> Dict[str, Any]:
-        if not self._client or not self.access_token:
+        if (not self._client or not self.access_token) and not self._twikit_client:
             raise RuntimeError(
-                "X commenting requires an authorized User Account. Please click 'Connect with 𝕏' or paste your User Access Token in Settings."
+                "X commenting requires an authorized User Account or Twikit cookies in Settings."
             )
 
         # Do NOT include buyer username in text because it's an in-reply-to comment directly under their post
@@ -376,27 +478,38 @@ class TwitterService:
         if len(formatted_comment) > 275:
             formatted_comment = formatted_comment[:270] + "..."
 
-        try:
-            logger.info(f"Posting direct comment on buyer tweet ID {buyer_tweet_id}: {formatted_comment}")
-            res = self._client.create_tweet(
-                text=formatted_comment,
-                in_reply_to_tweet_id=int(buyer_tweet_id),
-                user_auth=not getattr(self, "_is_oauth2", False)
-            )
-            tweet_id = str(res.data["id"])
-            return {
-                "success": True,
-                "post_type": "comment",
-                "tweet_id": tweet_id,
-                "message": f"Successfully commented directly on @{buyer_username}'s tweet! (Tweet ID: {tweet_id})"
-            }
-        except tweepy.errors.Forbidden as f_err:
-            logger.error(f"X direct reply restricted (403: {f_err})")
-            raise RuntimeError(
-                f"X direct comment restricted (403: {f_err}). Check that your app permissions are set to 'Read and Write' in the X Developer Portal."
-            )
-        except Exception as e:
-            logger.error(f"Error commenting on X: {e}")
-            raise RuntimeError(f"Failed to comment on buyer tweet: {e}")
+        if self._client and self.access_token:
+            try:
+                logger.info(f"Posting direct comment on buyer tweet ID {buyer_tweet_id}: {formatted_comment}")
+                res = self._client.create_tweet(
+                    text=formatted_comment,
+                    in_reply_to_tweet_id=int(buyer_tweet_id),
+                    user_auth=not getattr(self, "_is_oauth2", False)
+                )
+                tweet_id = str(res.data["id"])
+                return {
+                    "success": True,
+                    "post_type": "comment",
+                    "tweet_id": tweet_id,
+                    "message": f"Successfully commented directly on @{buyer_username}'s tweet! (Tweet ID: {tweet_id})"
+                }
+            except tweepy.errors.Forbidden as f_err:
+                if not self._twikit_client:
+                    logger.error(f"X direct reply restricted (403: {f_err})")
+                    raise RuntimeError(
+                        f"X direct comment restricted (403: {f_err}). Check that your app permissions are set to 'Read and Write' in the X Developer Portal."
+                    )
+                logger.warning(f"Official X reply 403 ({f_err}); falling back to Twikit.")
+            except Exception as e:
+                err_str = str(e)
+                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X reply unavailable ({err_str}); falling back to Twikit.")
+                else:
+                    logger.error(f"Error commenting on X: {e}")
+                    raise RuntimeError(f"Failed to comment on buyer tweet: {e}")
+
+        if self._twikit_client:
+            return self._twikit_reply(formatted_comment, buyer_tweet_id, buyer_username)
+        raise RuntimeError("No X posting client configured.")
 
 twitter_service = TwitterService()
