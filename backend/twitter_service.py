@@ -1,8 +1,14 @@
 import os
 import asyncio
 import logging
+import json
+import time
+import re
+import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
+
+import requests
 
 # Allow OAuth 2.0 PKCE over http:// for local development
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -24,10 +30,6 @@ except Exception:
     pass
 
 import tweepy
-try:
-    from twikit import Client as TwikitClient
-except Exception:
-    TwikitClient = None
 from models import Tweet
 
 logger = logging.getLogger("twitter_service")
@@ -35,6 +37,407 @@ logger = logging.getLogger("twitter_service")
 # In-memory stores for pending OAuth handshakes
 _oauth1_request_tokens: Dict[str, str] = {}
 _oauth2_handlers: Dict[str, tweepy.OAuth2UserHandler] = {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# X GraphQL Cookie Client — bypasses ClientTransaction entirely
+# Works from any IP (including datacenter IPs like Render/AWS) using
+# the public web bearer token + auth_token + ct0 cookies.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# X's public web bearer token (the one used by x.com in the browser)
+_WEB_BEARER = (
+    "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs"
+    "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+)
+
+# GraphQL query IDs — X rotates these occasionally; we try multiple known IDs
+# and also fetch the live one dynamically from x.com's JS bundle.
+_SEARCH_QUERY_IDS = [
+    "gkjsKepM6gl_HmFWoWKfgg",   # 2024-Q4
+    "nK1dw4oV3k4w5TdtcAdSww",   # alternate
+    "UN1i3zUiCp7-M1oNBMCOng",   # older fallback
+]
+_CREATE_TWEET_QUERY_IDS = [
+    "oB-5XsHNAbjvARJEc8CZFw",   # 2024-Q4
+    "SoVnbfCycZ7fERGCwpZkYA",   # alternate
+]
+
+_cached_search_qid: Optional[str] = None
+_cached_create_qid: Optional[str] = None
+
+
+def _fetch_live_query_id(operation: str) -> Optional[str]:
+    """
+    Scrape x.com's webpack bundle to get the current live GraphQL queryId
+    for a given operation name (e.g. 'SearchTimeline', 'CreateTweet').
+    Returns None if unreachable or not found.
+    """
+    try:
+        resp = requests.get(
+            "https://x.com/",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                )
+            },
+            timeout=15,
+        )
+        # Find main JS bundle URL
+        js_urls = re.findall(r'src="(https://abs\.twimg\.com/[^"]+\.js)"', resp.text)
+        if not js_urls:
+            js_urls = re.findall(r'"(https://abs\.twimg\.com/x-web[^"]+\.js)"', resp.text)
+
+        for js_url in js_urls[:5]:
+            try:
+                js_resp = requests.get(js_url, timeout=15)
+                # Pattern: queryId:"<id>",operationName:"SearchTimeline"
+                pattern = rf'queryId:"([^"]+)",operationName:"{re.escape(operation)}"'
+                match = re.search(pattern, js_resp.text)
+                if match:
+                    return match.group(1)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+class XGraphQLClient:
+    """
+    Direct X GraphQL client using browser cookies.
+    Does NOT use twikit/twifork — no ClientTransaction required.
+    Makes raw HTTPS requests identical to what x.com sends in the browser.
+    """
+
+    def __init__(self, auth_token: str, ct0: str):
+        self.auth_token = auth_token.strip()
+        self.ct0 = ct0.strip()
+        self._session = requests.Session()
+        self._session.headers.update(self._base_headers())
+
+    def _base_headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {_WEB_BEARER}",
+            "x-csrf-token": self.ct0,
+            "Cookie": f"auth_token={self.auth_token}; ct0={self.ct0}",
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "x-twitter-active-user": "yes",
+            "x-twitter-client-language": "en",
+            "Referer": "https://x.com/",
+            "Origin": "https://x.com",
+        }
+
+    def _refresh_headers(self):
+        """Refresh cookies in headers (call after ct0 update)."""
+        self._session.headers.update(self._base_headers())
+
+    def search_tweets(self, query: str, count: int = 20) -> List[Dict[str, Any]]:
+        """Search tweets via X's internal GraphQL SearchTimeline endpoint.
+        Tries multiple known queryIds and auto-discovers the live one if all fail."""
+        global _cached_search_qid
+
+        variables = {
+            "rawQuery": query,
+            "count": min(count, 20),
+            "querySource": "typed_query",
+            "product": "Latest",
+        }
+        features = {
+            "rweb_tipjar_consumption_enabled": True,
+            "responsive_web_graphql_exclude_directive_enabled": True,
+            "verified_phone_label_enabled": False,
+            "creator_subscriptions_tweet_preview_api_enabled": True,
+            "responsive_web_graphql_timeline_navigation_enabled": True,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "communities_web_enable_tweet_community_results_fetch": True,
+            "c9s_tweet_anatomy_moderator_badge_enabled": True,
+            "articles_preview_enabled": True,
+            "responsive_web_edit_tweet_api_enabled": True,
+            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+            "view_counts_everywhere_api_enabled": True,
+            "longform_notetweets_consumption_enabled": True,
+            "responsive_web_twitter_article_tweet_consumption_enabled": True,
+            "tweet_awards_web_tipping_enabled": False,
+            "creator_subscriptions_quote_tweet_preview_enabled": False,
+            "freedom_of_speech_not_reach_fetch_enabled": True,
+            "standardized_nudges_misinfo": True,
+            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+            "rweb_video_timestamps_enabled": True,
+            "longform_notetweets_rich_text_read_enabled": True,
+            "longform_notetweets_inline_media_enabled": True,
+            "responsive_web_enhance_cards_enabled": False,
+        }
+
+        params = {
+            "variables": json.dumps(variables, separators=(',', ':')),
+            "features": json.dumps(features, separators=(',', ':')),
+        }
+
+        # Build ordered list of queryIds to try: cached first, then known list, then live-fetched
+        qids_to_try = []
+        if _cached_search_qid:
+            qids_to_try.append(_cached_search_qid)
+        for qid in _SEARCH_QUERY_IDS:
+            if qid not in qids_to_try:
+                qids_to_try.append(qid)
+
+        last_error = None
+        for qid in qids_to_try:
+            url = f"https://api.twitter.com/graphql/{qid}/SearchTimeline"
+            try:
+                resp = self._session.get(url, params=params, timeout=30)
+                if resp.status_code == 403:
+                    self._refresh_headers()
+                    resp = self._session.get(url, params=params, timeout=30)
+                if resp.status_code == 404:
+                    logger.warning(f"SearchTimeline queryId {qid} returned 404, trying next.")
+                    last_error = f"HTTP 404 for queryId {qid}"
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                results = self._parse_search_results(data)
+                _cached_search_qid = qid  # cache successful qid
+                return results
+            except RuntimeError:
+                raise
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else "?"
+                if status == 404:
+                    last_error = f"HTTP 404 for queryId {qid}"
+                    continue
+                raise RuntimeError(f"X GraphQL search HTTP {status}: {e}")
+            except Exception as e:
+                last_error = str(e)
+                raise RuntimeError(f"X GraphQL search request failed: {e}")
+
+        # All known IDs failed — try to discover live queryId from x.com bundle
+        logger.warning("All known SearchTimeline queryIds failed; attempting live discovery...")
+        live_qid = _fetch_live_query_id("SearchTimeline")
+        if live_qid and live_qid not in qids_to_try:
+            url = f"https://api.twitter.com/graphql/{live_qid}/SearchTimeline"
+            try:
+                resp = self._session.get(url, params=params, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                results = self._parse_search_results(data)
+                _cached_search_qid = live_qid
+                logger.info(f"Live-discovered SearchTimeline queryId: {live_qid}")
+                return results
+            except Exception as e:
+                raise RuntimeError(f"X GraphQL search failed (all queryIds exhausted). Last error: {e}")
+
+        raise RuntimeError(f"X GraphQL search failed — all queryIds returned 404. X may have rotated them. Last: {last_error}")
+
+    def _parse_search_results(self, data: Dict) -> List[Dict[str, Any]]:
+        """Extract tweet objects from SearchTimeline GraphQL response."""
+        tweets = []
+        try:
+            instructions = (
+                data.get("data", {})
+                .get("search_by_raw_query", {})
+                .get("search_timeline", {})
+                .get("timeline", {})
+                .get("instructions", [])
+            )
+            for instruction in instructions:
+                entries = instruction.get("entries", [])
+                for entry in entries:
+                    # Standard tweet entry
+                    item_content = (
+                        entry.get("content", {})
+                        .get("itemContent", {})
+                    )
+                    tweet_result = item_content.get("tweet_results", {}).get("result", {})
+                    parsed = self._extract_tweet(tweet_result)
+                    if parsed:
+                        tweets.append(parsed)
+
+                    # Module entries (grouped tweets)
+                    items = entry.get("content", {}).get("items", [])
+                    for item in items:
+                        item_c = item.get("item", {}).get("itemContent", {})
+                        tr = item_c.get("tweet_results", {}).get("result", {})
+                        parsed2 = self._extract_tweet(tr)
+                        if parsed2:
+                            tweets.append(parsed2)
+        except Exception as e:
+            logger.warning(f"Error parsing GraphQL search results: {e}")
+        return tweets
+
+    def _extract_tweet(self, result: Dict) -> Optional[Dict[str, Any]]:
+        """Extract a single tweet dict from a tweet_results.result object."""
+        if not result:
+            return None
+        # Handle tweet wrapper
+        if result.get("__typename") == "TweetWithVisibilityResults":
+            result = result.get("tweet", result)
+        if result.get("__typename") not in ("Tweet", None) and result.get("__typename"):
+            return None
+
+        try:
+            legacy = result.get("legacy", {})
+            core = result.get("core", {})
+            user_result = core.get("user_results", {}).get("result", {})
+            user_legacy = user_result.get("legacy", {})
+
+            tweet_id = legacy.get("id_str") or result.get("rest_id", "")
+            text = legacy.get("full_text") or legacy.get("text", "")
+            username = user_legacy.get("screen_name", "unknown")
+            name = user_legacy.get("name", username)
+            created_at = legacy.get("created_at", "")
+
+            if not tweet_id or not text:
+                return None
+
+            # Skip retweets and replies
+            if text.startswith("RT @") or legacy.get("in_reply_to_status_id_str"):
+                return None
+
+            return {
+                "id": tweet_id,
+                "text": text,
+                "username": username,
+                "name": name,
+                "created_at": created_at,
+            }
+        except Exception:
+            return None
+
+    def create_tweet(self, text: str, reply_to_id: Optional[str] = None) -> str:
+        """Post a tweet or reply via X's internal CreateTweet GraphQL endpoint."""
+        global _cached_create_qid
+
+        variables: Dict[str, Any] = {
+            "tweet_text": text,
+            "dark_request": False,
+            "media": {"media_entities": [], "possibly_sensitive": False},
+            "semantic_annotation_ids": [],
+        }
+        if reply_to_id:
+            variables["reply"] = {
+                "in_reply_to_tweet_id": reply_to_id,
+                "exclude_reply_user_ids": [],
+            }
+
+        features = {
+            "communities_web_enable_tweet_community_results_fetch": True,
+            "c9s_tweet_anatomy_moderator_badge_enabled": True,
+            "responsive_web_edit_tweet_api_enabled": True,
+            "articles_preview_enabled": True,
+            "responsive_web_graphql_exclude_directive_enabled": True,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "tweetypie_unmention_optimization_enabled": True,
+            "responsive_web_graphql_timeline_navigation_enabled": True,
+            "interactive_text_enabled": True,
+            "responsive_web_text_conversations_enabled": False,
+            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+            "longform_notetweets_rich_text_read_enabled": True,
+            "longform_notetweets_inline_media_enabled": True,
+            "responsive_web_enhance_cards_enabled": False,
+        }
+
+        # Try known queryIds
+        qids_to_try = []
+        if _cached_create_qid:
+            qids_to_try.append(_cached_create_qid)
+        for qid in _CREATE_TWEET_QUERY_IDS:
+            if qid not in qids_to_try:
+                qids_to_try.append(qid)
+
+        last_error = None
+        for qid in qids_to_try:
+            payload = {
+                "variables": variables,
+                "features": features,
+                "queryId": qid,
+            }
+            url = f"https://api.twitter.com/graphql/{qid}/CreateTweet"
+            try:
+                resp = self._session.post(url, json=payload, timeout=30)
+                if resp.status_code == 403:
+                    self._refresh_headers()
+                    resp = self._session.post(url, json=payload, timeout=30)
+                if resp.status_code == 404:
+                    last_error = f"HTTP 404 for queryId {qid}"
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                tweet_id = (
+                    data.get("data", {})
+                    .get("create_tweet", {})
+                    .get("tweet_results", {})
+                    .get("result", {})
+                    .get("rest_id", "")
+                )
+                if not tweet_id:
+                    raise RuntimeError("CreateTweet: no tweet ID in response")
+                _cached_create_qid = qid
+                return tweet_id
+            except RuntimeError:
+                raise
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else "?"
+                body = ""
+                try:
+                    body = e.response.text[:300]
+                except Exception:
+                    pass
+                if status == 404:
+                    last_error = f"HTTP 404 for queryId {qid}"
+                    continue
+                raise RuntimeError(f"X GraphQL CreateTweet HTTP {status}: {body}")
+            except Exception as e:
+                raise RuntimeError(f"X GraphQL CreateTweet request failed: {e}")
+
+        # Try live discovery
+        live_qid = _fetch_live_query_id("CreateTweet")
+        if live_qid:
+            payload = {"variables": variables, "features": features, "queryId": live_qid}
+            url = f"https://api.twitter.com/graphql/{live_qid}/CreateTweet"
+            try:
+                resp = self._session.post(url, json=payload, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                tweet_id = (
+                    data.get("data", {}).get("create_tweet", {})
+                    .get("tweet_results", {}).get("result", {}).get("rest_id", "")
+                )
+                if not tweet_id:
+                    raise RuntimeError("CreateTweet: no tweet ID in response")
+                _cached_create_qid = live_qid
+                return tweet_id
+            except Exception as e:
+                raise RuntimeError(f"X GraphQL CreateTweet failed (all queryIds): {e}")
+
+        raise RuntimeError(f"X GraphQL CreateTweet failed — all queryIds returned 404. Last: {last_error}")
+
+    def verify_session(self) -> bool:
+        """Quick check that the cookies are valid."""
+        for url in [
+            "https://api.twitter.com/1.1/account/verify_credentials.json",
+            "https://api.x.com/1.1/account/verify_credentials.json",
+        ]:
+            try:
+                resp = self._session.get(url, timeout=15)
+                if resp.status_code == 200:
+                    return True
+            except Exception:
+                continue
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main TwitterService
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TwitterService:
     def __init__(self):
@@ -52,7 +455,7 @@ class TwitterService:
         self._normalize_credentials()
         self._client: Optional[tweepy.Client] = None
         self._search_client: Optional[tweepy.Client] = None
-        self._twikit_client: Optional[Any] = None
+        self._graphql_client: Optional[XGraphQLClient] = None
         self._is_oauth2: bool = False
         self._init_client()
 
@@ -107,17 +510,16 @@ class TwitterService:
         else:
             self._search_client = self._client
 
-        if TwikitClient and self.auth_token and self.ct0:
+        # Initialize GraphQL cookie client (replaces twifork/twikit)
+        if self.auth_token and self.ct0:
             try:
-                tc = TwikitClient("en-US")
-                tc.set_cookies({"auth_token": self.auth_token, "ct0": self.ct0})
-                self._twikit_client = tc
-                logger.info("Free Twikit cookie client initialized.")
+                self._graphql_client = XGraphQLClient(self.auth_token, self.ct0)
+                logger.info("X GraphQL cookie client initialized (auth_token + ct0).")
             except Exception as e:
-                logger.error(f"Failed to initialize Twikit client: {e}")
-                self._twikit_client = None
+                logger.error(f"Failed to initialize GraphQL cookie client: {e}")
+                self._graphql_client = None
         else:
-            self._twikit_client = None
+            self._graphql_client = None
 
     def reload_credentials(
         self,
@@ -145,11 +547,11 @@ class TwitterService:
 
     def is_configured(self) -> bool:
         has_official = self._client is not None and bool(self.access_token or self.bearer_token)
-        has_twikit = self._twikit_client is not None
-        return has_official or has_twikit
+        has_graphql = self._graphql_client is not None
+        return has_official or has_graphql
 
     def get_credential_status(self) -> Dict[str, Any]:
-        has_twikit = self._twikit_client is not None
+        has_graphql = self._graphql_client is not None
         return {
             "has_bearer_token": bool(self.bearer_token),
             "has_client_id": bool(self.client_id),
@@ -157,14 +559,14 @@ class TwitterService:
             "has_api_secret": bool(self.api_secret),
             "has_access_token": bool(self.access_token),
             "has_access_token_secret": bool(self.access_token_secret),
-            "has_twikit_cookies": has_twikit,
-            "can_search": bool(self.bearer_token or self.api_key or self.access_token or has_twikit),
-            "can_comment": bool(self.access_token or has_twikit)
+            "has_twikit_cookies": has_graphql,
+            "can_search": bool(self.bearer_token or self.api_key or self.access_token or has_graphql),
+            "can_comment": bool(self.access_token or has_graphql)
         }
 
     # --- Dual OAuth Connect: OAuth 2.0 PKCE or OAuth 1.0a ---
     def generate_oauth_url(self, callback_url: str) -> Dict[str, str]:
-        # 1. Prefer OAuth 2.0 PKCE if client_id is available (Standard on new X Developer accounts)
+        # 1. Prefer OAuth 2.0 PKCE if client_id is available
         if self.client_id:
             handler = tweepy.OAuth2UserHandler(
                 client_id=self.client_id,
@@ -173,13 +575,12 @@ class TwitterService:
                 client_secret=self.client_secret or None
             )
             auth_url = handler.get_authorization_url()
-            # Cache handler by state parameter
             state = handler.new_state if hasattr(handler, 'new_state') else "default"
             _oauth2_handlers[state] = handler
             _oauth2_handlers["latest"] = handler
             return {"auth_url": auth_url, "type": "oauth2"}
 
-        # 2. Or OAuth 1.0a if API Key & Secret are provided
+        # 2. OAuth 1.0a fallback
         if self.api_key and self.api_secret:
             try:
                 auth = tweepy.OAuth1UserHandler(
@@ -213,9 +614,8 @@ class TwitterService:
             handler = _oauth2_handlers[state]
         if not handler:
             handler = _oauth2_handlers.get("latest")
-            
+
         if not handler and self.client_id:
-            # Resilient fallback: reconstruct handler if server restarted
             try:
                 from urllib.parse import urlparse
                 parsed = urlparse(full_redirect_url)
@@ -231,7 +631,7 @@ class TwitterService:
 
         if not handler:
             raise RuntimeError("OAuth2 session expired. Please click 'Connect with 𝕏' again.")
-            
+
         token_data = handler.fetch_token(full_redirect_url)
         access_token = token_data.get("access_token", "")
         refresh_token = token_data.get("refresh_token", "")
@@ -258,57 +658,45 @@ class TwitterService:
             "access_token_secret": access_token_secret
         }
 
-    def _run_coro(self, coro):
-        """Safely runs an async twikit coroutine from sync or FastAPI threadpool contexts."""
-        try:
-            asyncio.get_running_loop()
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, coro).result()
-        except RuntimeError:
-            return asyncio.run(coro)
+    # --- GraphQL cookie search ---
+    def _graphql_search(self, query: str, role: str, count: int = 20) -> List[Tweet]:
+        if not self._graphql_client:
+            raise RuntimeError("GraphQL cookie client (auth_token + ct0) not configured.")
 
-    def _twikit_search(self, query: str, role: str, count: int = 10) -> List[Tweet]:
-        if not self._twikit_client:
-            raise RuntimeError("Free Twikit cookies (auth_token + ct0) not configured.")
-        async def _do():
-            results = await self._twikit_client.search_tweet(query, product="Latest", count=min(max(count, 10), 40))
-            tweets = []
-            for t in (results or []):
-                uname = getattr(getattr(t, "user", None), "screen_name", None) or "unknown"
-                name = getattr(getattr(t, "user", None), "name", None) or uname
-                created = str(getattr(t, "created_at", "") or "")
-                tweets.append(Tweet(
-                    id=str(t.id),
-                    text=str(t.text or ""),
-                    author_username=uname,
-                    author_name=name,
-                    created_at=created,
-                    role=role
-                ))
-            return tweets
-        logger.info(f"Using FREE Twikit search ({role}): {query}")
-        return self._run_coro(_do())
+        logger.info(f"Using X GraphQL cookie search ({role}): {query}")
+        raw = self._graphql_client.search_tweets(query, count=count)
 
-    def _twikit_reply(self, formatted_comment: str, buyer_tweet_id: str, buyer_username: str) -> Dict[str, Any]:
-        if not self._twikit_client:
-            raise RuntimeError("Free Twikit cookies (auth_token + ct0) not configured.")
-        async def _do():
-            res = await self._twikit_client.create_tweet(text=formatted_comment, reply_to=str(buyer_tweet_id))
-            return str(res.id)
-        tweet_id = self._run_coro(_do())
+        tweets = []
+        for t in raw:
+            tweets.append(Tweet(
+                id=t["id"],
+                text=t["text"],
+                author_username=t["username"],
+                author_name=t["name"],
+                created_at=t["created_at"],
+                role=role
+            ))
+        return tweets
+
+    # --- GraphQL cookie reply ---
+    def _graphql_reply(self, text: str, reply_to_id: str, buyer_username: str) -> Dict[str, Any]:
+        if not self._graphql_client:
+            raise RuntimeError("GraphQL cookie client (auth_token + ct0) not configured.")
+
+        tweet_id = self._graphql_client.create_tweet(text=text, reply_to_id=reply_to_id)
         return {
             "success": True,
             "post_type": "comment",
             "tweet_id": tweet_id,
-            "message": f"Successfully commented directly on @{buyer_username}'s tweet via Twikit! (Tweet ID: {tweet_id})"
+            "message": f"Successfully commented on @{buyer_username}'s tweet via GraphQL! (Tweet ID: {tweet_id})"
         }
 
     # --- Live Search with Targeted Intent Phrases ---
     def search_buyers(self, keyword: str, count: int = 10) -> List[Tweet]:
-        if not self._client and not self._twikit_client:
-            raise RuntimeError("X client not configured. Connect your X account or add Twikit cookies in Settings.")
+        if not self._client and not self._graphql_client:
+            raise RuntimeError("X client not configured. Connect your X account or add auth_token + ct0 cookies in Settings.")
 
-        # Multilingual buyer search query (English, Spanish, French, German, Italian, Portuguese)
+        # Multilingual buyer search query
         query = (
             f'("{keyword}") '
             f'("looking for" OR "need ticket" OR "who has" OR "wtb" OR '
@@ -316,10 +704,12 @@ class TwitterService:
             f'"suche ticket" OR "suche karte" OR "cerco biglietto" OR "procuro ingresso") '
             f'-is:retweet -is:reply'
         )
+
+        # Try official API first
         client = self._search_client or self._client
         if client:
             try:
-                logger.info(f"Searching live X for buyers: {query}")
+                logger.info(f"Searching live X for buyers (official API): {query}")
                 use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
                 response = client.search_recent_tweets(
                     query=query,
@@ -329,48 +719,49 @@ class TwitterService:
                     user_fields=["username", "name"],
                     user_auth=use_oauth1
                 )
-                if not response or not response.data:
-                    return []
-                users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
-                tweets = []
-                for t in response.data:
-                    user = users_map.get(t.author_id)
-                    uname = user.username if user else f"user_{t.author_id}"
-                    name = user.name if user else uname
-                    created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
-                    tweets.append(Tweet(
-                        id=str(t.id),
-                        text=t.text,
-                        author_username=uname,
-                        author_name=name,
-                        created_at=created,
-                        role="buyer"
-                    ))
-                return tweets
+                if response and response.data:
+                    users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
+                    tweets = []
+                    for t in response.data:
+                        user = users_map.get(t.author_id)
+                        uname = user.username if user else f"user_{t.author_id}"
+                        name = user.name if user else uname
+                        created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
+                        tweets.append(Tweet(
+                            id=str(t.id),
+                            text=t.text,
+                            author_username=uname,
+                            author_name=name,
+                            created_at=created,
+                            role="buyer"
+                        ))
+                    return tweets
+                return []
             except tweepy.errors.TweepyException as te:
                 err_str = str(te)
-                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
-                    logger.warning(f"Official X search unavailable ({err_str}); falling back to FREE Twikit search.")
+                if self._graphql_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X search unavailable ({err_str}); falling back to GraphQL cookie search.")
                 else:
                     logger.error(f"Tweepy buyer search error: {te}")
                     raise RuntimeError(self._format_search_error(te))
             except Exception as e:
-                if not self._twikit_client:
+                if not self._graphql_client:
                     logger.error(f"Unexpected error searching X buyers: {e}")
                     raise RuntimeError(f"Failed to query X for buyers: {e}")
 
-        if self._twikit_client:
+        # Fallback: GraphQL cookie search
+        if self._graphql_client:
             try:
-                return self._twikit_search(query, "buyer", count)
+                return self._graphql_search(query, "buyer", count)
             except Exception as e:
-                logger.error(f"Twikit buyer search error: {e}")
-                raise RuntimeError(f"Free Twikit search error: {e}")
+                logger.error(f"GraphQL cookie buyer search error: {e}")
+                raise RuntimeError(f"GraphQL cookie search error: {e}")
+
         return []
 
     def _format_search_error(self, te: Exception) -> str:
         err_str = str(te)
         if "401" in err_str or "403" in err_str:
-            # Check if OAuth 2.0 user token itself is valid via get_me()
             user_valid = False
             try:
                 if self._client:
@@ -384,30 +775,31 @@ class TwitterService:
                 return (
                     f"X API Search blocked ({err_str}). Your @account OAuth 2.0 login IS valid, "
                     "but X's Free Developer tier does NOT include Tweet Search (/2/tweets/search/recent). "
-                    "To enable live search: upgrade to X API Basic in developer.x.com OR paste your App Bearer Token in Settings -> Tab 3 (Direct Tokens)."
+                    "To enable live search: add auth_token + ct0 cookies in Settings -> Tab 3."
                 )
             elif not self.bearer_token:
                 return (
-                    f"X API Search Error ({err_str}). Try pasting your App Bearer Token in Settings -> Tab 3 (Direct Tokens) "
-                    "or ensure your X Developer Portal project is on Basic tier (Free tier blocks Search API)."
+                    f"X API Search Error ({err_str}). Add your auth_token + ct0 cookies in Settings -> Tab 3 "
+                    "to enable free GraphQL search."
                 )
         return f"X API Search Error: {err_str}"
 
     def search_sellers(self, keyword: str, count: int = 10) -> List[Tweet]:
-        if not self._client and not self._twikit_client:
-            raise RuntimeError("X client not configured. Connect your X account or add Twikit cookies in Settings.")
+        if not self._client and not self._graphql_client:
+            raise RuntimeError("X client not configured. Connect your X account or add auth_token + ct0 cookies in Settings.")
 
-        # Multilingual seller search query (English, Spanish, French, German, Italian, Portuguese)
+        # Multilingual seller search query
         query = (
             f'("{keyword}") '
             f'("selling ticket" OR "have extra" OR "wts" OR "tickets available" OR '
             f'"vendo entrada" OR "vendo boleta" OR "vends place" OR "verkaufe ticket" OR "vendo biglietto" OR "vendo ingresso") '
             f'-is:retweet -is:reply'
         )
+
         client = self._search_client or self._client
         if client:
             try:
-                logger.info(f"Searching live X for sellers: {query}")
+                logger.info(f"Searching live X for sellers (official API): {query}")
                 use_oauth1 = not getattr(self, "_is_oauth2", False) and not self.bearer_token
                 response = client.search_recent_tweets(
                     query=query,
@@ -417,42 +809,43 @@ class TwitterService:
                     user_fields=["username", "name"],
                     user_auth=use_oauth1
                 )
-                if not response or not response.data:
-                    return []
-                users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
-                tweets = []
-                for t in response.data:
-                    user = users_map.get(t.author_id)
-                    uname = user.username if user else f"user_{t.author_id}"
-                    name = user.name if user else uname
-                    created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
-                    tweets.append(Tweet(
-                        id=str(t.id),
-                        text=t.text,
-                        author_username=uname,
-                        author_name=name,
-                        created_at=created,
-                        role="seller"
-                    ))
-                return tweets
+                if response and response.data:
+                    users_map = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
+                    tweets = []
+                    for t in response.data:
+                        user = users_map.get(t.author_id)
+                        uname = user.username if user else f"user_{t.author_id}"
+                        name = user.name if user else uname
+                        created = t.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if t.created_at else ""
+                        tweets.append(Tweet(
+                            id=str(t.id),
+                            text=t.text,
+                            author_username=uname,
+                            author_name=name,
+                            created_at=created,
+                            role="seller"
+                        ))
+                    return tweets
+                return []
             except tweepy.errors.TweepyException as te:
                 err_str = str(te)
-                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
-                    logger.warning(f"Official X seller search unavailable ({err_str}); falling back to FREE Twikit search.")
+                if self._graphql_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X seller search unavailable ({err_str}); falling back to GraphQL cookie search.")
                 else:
                     logger.error(f"Tweepy seller search error: {te}")
                     raise RuntimeError(self._format_search_error(te))
             except Exception as e:
-                if not self._twikit_client:
+                if not self._graphql_client:
                     logger.error(f"Unexpected error searching X sellers: {e}")
                     raise RuntimeError(f"Failed to query X for sellers: {e}")
 
-        if self._twikit_client:
+        if self._graphql_client:
             try:
-                return self._twikit_search(query, "seller", count)
+                return self._graphql_search(query, "seller", count)
             except Exception as e:
-                logger.error(f"Twikit seller search error: {e}")
-                raise RuntimeError(f"Free Twikit search error: {e}")
+                logger.error(f"GraphQL cookie seller search error: {e}")
+                raise RuntimeError(f"GraphQL cookie search error: {e}")
+
         return []
 
     # --- Comment Directly on Buyer's Tweet ---
@@ -464,20 +857,20 @@ class TwitterService:
         seller_username: str,
         event_keyword: str
     ) -> Dict[str, Any]:
-        if (not self._client or not self.access_token) and not self._twikit_client:
+        if (not self._client or not self.access_token) and not self._graphql_client:
             raise RuntimeError(
-                "X commenting requires an authorized User Account or Twikit cookies in Settings."
+                "X commenting requires an authorized User Account or auth_token + ct0 cookies in Settings."
             )
 
-        # Do NOT include buyer username in text because it's an in-reply-to comment directly under their post
         formatted_comment = comment_text.strip()
         if f"@{buyer_username}" in formatted_comment:
             formatted_comment = formatted_comment.replace(f"@{buyer_username}", "").strip()
             formatted_comment = formatted_comment.lstrip(",:;- ").strip()
-            
+
         if len(formatted_comment) > 275:
             formatted_comment = formatted_comment[:270] + "..."
 
+        # Try official Tweepy first
         if self._client and self.access_token:
             try:
                 logger.info(f"Posting direct comment on buyer tweet ID {buyer_tweet_id}: {formatted_comment}")
@@ -494,22 +887,25 @@ class TwitterService:
                     "message": f"Successfully commented directly on @{buyer_username}'s tweet! (Tweet ID: {tweet_id})"
                 }
             except tweepy.errors.Forbidden as f_err:
-                if not self._twikit_client:
+                if not self._graphql_client:
                     logger.error(f"X direct reply restricted (403: {f_err})")
                     raise RuntimeError(
                         f"X direct comment restricted (403: {f_err}). Check that your app permissions are set to 'Read and Write' in the X Developer Portal."
                     )
-                logger.warning(f"Official X reply 403 ({f_err}); falling back to Twikit.")
+                logger.warning(f"Official X reply 403 ({f_err}); falling back to GraphQL cookie client.")
             except Exception as e:
                 err_str = str(e)
-                if self._twikit_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
-                    logger.warning(f"Official X reply unavailable ({err_str}); falling back to Twikit.")
+                if self._graphql_client and ("402" in err_str or "401" in err_str or "403" in err_str or "credits" in err_str.lower()):
+                    logger.warning(f"Official X reply unavailable ({err_str}); falling back to GraphQL cookie client.")
                 else:
                     logger.error(f"Error commenting on X: {e}")
                     raise RuntimeError(f"Failed to comment on buyer tweet: {e}")
 
-        if self._twikit_client:
-            return self._twikit_reply(formatted_comment, buyer_tweet_id, buyer_username)
+        # Fallback: GraphQL cookie client
+        if self._graphql_client:
+            return self._graphql_reply(formatted_comment, buyer_tweet_id, buyer_username)
+
         raise RuntimeError("No X posting client configured.")
+
 
 twitter_service = TwitterService()
