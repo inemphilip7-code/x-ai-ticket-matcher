@@ -124,31 +124,28 @@ def debug_graphql():
     import re
     debug_log = []
     
+    auth_token = twitter_service.auth_token
+    ct0 = twitter_service.ct0
+    
+    s = requests.Session()
+    s.cookies.set("auth_token", auth_token, domain=".x.com")
+    s.cookies.set("ct0", ct0, domain=".x.com")
+    s.cookies.set("auth_token", auth_token, domain=".twitter.com")
+    s.cookies.set("ct0", ct0, domain=".twitter.com")
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Cookie": f"auth_token={auth_token}; ct0={ct0}",
+        "x-csrf-token": ct0,
+        "Referer": "https://x.com/",
+    }
+    s.headers.update(headers)
+    
     try:
-        r_home = requests.get(
-            "https://x.com/search?q=test&f=live",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            },
-            timeout=15
-        )
-        debug_log.append(f"search page status: {r_home.status_code}")
-        
-        # Look for all twimg js URLs
-        all_js = list(set(re.findall(r'https://abs\.twimg\.com/[^"\'\s<>]+\.js', r_home.text)))
-        debug_log.append(f"JS files on search page: {all_js[:10]}")
-        
-        # Search inside each JS file for SearchTimeline or queryId
-        found = []
-        for js_url in all_js:
-            try:
-                js_content = requests.get(js_url, timeout=10).text
-                q_matches = re.findall(r'queryId:\s*"([^"]+)",\s*operationName:\s*"([^"]+)"', js_content)
-                for qid, op in q_matches:
-                    found.append({"op": op, "qid": qid, "src": js_url.split("/")[-1]})
-            except Exception:
-                continue
-        debug_log.append({"found_queries": found})
+        r = s.get("https://x.com/home", timeout=15)
+        debug_log.append(f"home with cookies status: {r.status_code}")
+        all_js = list(set(re.findall(r'https://abs\.twimg\.com/[^"\'\s<>]+\.js', r.text)))
+        debug_log.append(f"JS files on home page: {all_js[:10]}")
     except Exception as e:
         debug_log.append(f"Error: {e}")
 
