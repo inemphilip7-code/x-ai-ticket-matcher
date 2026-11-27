@@ -290,12 +290,21 @@ class XGraphQLClient:
             legacy = result.get("legacy", {})
             core = result.get("core", {})
             user_result = core.get("user_results", {}).get("result", {})
+            user_core = user_result.get("core", {})
             user_legacy = user_result.get("legacy", {})
 
             tweet_id = legacy.get("id_str") or result.get("rest_id", "")
             text = legacy.get("full_text") or legacy.get("text", "")
-            username = user_legacy.get("screen_name", "unknown")
-            name = user_legacy.get("name", username)
+            username = (
+                user_core.get("screen_name")
+                or user_legacy.get("screen_name")
+                or user_result.get("screen_name", "unknown")
+            )
+            name = (
+                user_core.get("name")
+                or user_legacy.get("name")
+                or user_result.get("name", username)
+            )
             created_at = legacy.get("created_at", "")
 
             if not tweet_id or not text:
@@ -703,13 +712,12 @@ class TwitterService:
         if not self._client and not self._graphql_client:
             raise RuntimeError("X client not configured. Connect your X account or add auth_token + ct0 cookies in Settings.")
 
-        # Multilingual buyer search query
+        # Multilingual buyer search query strictly requiring ticket terms with the keyword
         query = (
-            f'("{keyword}") '
-            f'("looking for" OR "need ticket" OR "who has" OR "wtb" OR '
-            f'"busco entrada" OR "busco boleta" OR "cherche place" OR "cherche billet" OR '
-            f'"suche ticket" OR "suche karte" OR "cerco biglietto" OR "procuro ingresso") '
-            f'-is:retweet -is:reply'
+            f'"{keyword}" '
+            f'(ticket OR tickets OR tix OR pass OR passes OR entrada OR entradas OR boleta OR boletas OR billet OR billets OR place OR places OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
+            f'(need OR looking OR want OR buy OR wtb OR spare OR extra OR anyone OR who OR busco OR compro OR cherche OR suche OR cerco OR procuro) '
+            f'-RT'
         )
 
         # 1. Prefer GraphQL cookie search if cookies are configured (Free, no rate limits, works without paid tier)
@@ -786,12 +794,12 @@ class TwitterService:
         if not self._client and not self._graphql_client:
             raise RuntimeError("X client not configured. Connect your X account or add auth_token + ct0 cookies in Settings.")
 
-        # Multilingual seller search query
+        # Multilingual seller search query strictly requiring ticket terms with the keyword
         query = (
-            f'("{keyword}") '
-            f'("selling ticket" OR "have extra" OR "wts" OR "tickets available" OR '
-            f'"vendo entrada" OR "vendo boleta" OR "vends place" OR "verkaufe ticket" OR "vendo biglietto" OR "vendo ingresso") '
-            f'-is:retweet -is:reply'
+            f'"{keyword}" '
+            f'(ticket OR tickets OR tix OR pass OR passes OR entrada OR entradas OR billet OR billets OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
+            f'("selling" OR "have extra" OR "spare" OR "wts" OR "available" OR "vendo" OR "vends" OR "verkaufe") '
+            f'-RT'
         )
 
         # 1. Prefer GraphQL cookie search if cookies are configured

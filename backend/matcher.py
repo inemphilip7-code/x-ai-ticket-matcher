@@ -102,19 +102,23 @@ def detect_tweet_language(text: str) -> str:
 
 def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_username: str = "", lang: str = "en") -> str:
     cleaned = text.strip()
-    # Remove buyer username tag if model mistakenly included it
     if buyer_username:
         cleaned = cleaned.replace(f"@{buyer_username}", "").strip()
         cleaned = cleaned.lstrip(",:;- ").strip()
         
-    # Tag seller username if provided; if not, provide safe ticket guidance
+    # If a seller username is provided, ensure it is mentioned naturally without destroying human phrasing
     if seller_username and seller_username.strip():
         clean_seller = seller_username.lstrip("@")
         if f"@{clean_seller}" not in cleaned:
-            cleaned = f"Hey! Check with @{clean_seller}, they have {keyword} tickets available."
+            if clean_seller.lower() in cleaned.lower():
+                cleaned = re.sub(rf"(?<!@)\b{re.escape(clean_seller)}\b", f"@{clean_seller}", cleaned, flags=re.IGNORECASE)
+            elif cleaned:
+                cleaned = f"{cleaned.rstrip('.')} — check with @{clean_seller}!"
+            else:
+                cleaned = f"Hey, if you're looking for {keyword} tickets, check with @{clean_seller}!"
     else:
         if not cleaned:
-            cleaned = f"Hey! Looking for {keyword} tickets? Check verified fan-to-fan resales for verified seats."
+            cleaned = f"Hey! Looking for {keyword} tickets? Be sure to check verified fan exchanges for available seats."
         
     # Remove any accidental payment terms in multiple languages
     forbidden = [
@@ -125,10 +129,10 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
     for term in forbidden:
         if term in cleaned.lower():
             if seller_username and seller_username.strip():
-                templates = MULTILINGUAL_TEMPLATES.get(lang, MULTILINGUAL_TEMPLATES["en"])
-                cleaned = random.choice(templates).format(seller=seller_username.lstrip("@"), keyword=keyword)
+                clean_seller = seller_username.lstrip("@")
+                cleaned = f"Hey! Still searching for {keyword} tickets? Check with @{clean_seller}, they had spare passes available."
             else:
-                cleaned = f"Looking for {keyword} tickets? Be sure to check verified fan exchanges for available seats."
+                cleaned = f"Still looking for {keyword} tickets? Fan resale platforms usually have seats pop up closer to the date."
             break
             
     if len(cleaned) > 238:
@@ -194,23 +198,31 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
         import requests
         
         system_instruction = (
-            "You are a sophisticated, multilingual Google Gemini AI Ticket Matchmaker for X (Twitter).\n"
-            "Analyze a tweet to determine if someone is GENUINELY trying to BUY tickets for an event, and formulate a reply promoting the seller.\n\n"
-            "CRITICAL INTENT VERIFICATION RULE:\n"
-            "1. STRICT BUYER INTENT: The tweet author MUST be an actual person looking to BUY, find, or get tickets for the event (e.g., 'need 2 tickets', 'who is selling', 'wtb').\n"
-            "   If the tweet is just casual conversation, memes, lyrics, general excitement ('I love Coldplay'), news, or non-commercial chatter, you MUST return confidence: 0 and NO suggested reply!\n\n"
-            "CRITICAL TAGGING & COMMENT RULES:\n"
-            "2. If a specific seller username is provided, tag that seller (@seller_username)! Example: 'Reach out to @{seller}, they have extra tickets available.' If no seller username is provided, offer helpful ticket advice without asking for or requiring an account.\n"
-            "3. DO NOT INCLUDE THE BUYER'S USERNAME (@buyer) because this is a direct in-reply-to comment under their tweet.\n"
-            "4. NEVER MENTION PAYMENT METHODS (PayPal, CashApp, Venmo, Zelle, Bizum, wire, etc.).\n"
-            "5. FLUENT NATIVE LANGUAGE: Match the buyer's language/locale (Spanish, French, German, Italian, Portuguese, English).\n"
-            "6. Under 230 characters, friendly, natural human phrasing.\n\n"
-            "Output JSON with keys:\n"
+            "You are an expert, multilingual AI on X (Twitter). Your role is to evaluate whether a user's tweet shows GENUINE intent to buy, find, or get tickets for an event, and if so, draft an authentic, friendly, and 100% human-sounding reply.\n\n"
+            "STEP 1: THINK & ANALYZE (in the 'thinking' field):\n"
+            "- Carefully inspect the tweet: Is this person genuinely looking to BUY/GET tickets (e.g. 'need 2 tickets', 'who is selling', 'wtb', 'looking for tickets')?\n"
+            "- If they are merely discussing music, quoting lyrics, sharing memes/news, or expressing general feelings (e.g. 'I want to see Coldplay', 'bought a shirt', 'looking for friends'), mark is_buyer: false, confidence: 0, and NO reply!\n"
+            "- Reflect on the user's language, tone, and context: Are they excited? In a hurry? What specific concert/city/date do they mention?\n"
+            "- Strategize how to sound like a real fellow fan on Twitter, NOT a bot or marketer. Think of a natural, helpful reply.\n\n"
+            "STEP 2: NATURAL HUMAN WRITING RULES:\n"
+            "1. NEVER USE CANNED OR EXACT ROBOTIC WORDS: Absolutely avoid generic formulas like 'Hey! Check with @seller, they have tickets available.' or 'Reach out to @seller for discount tickets.'\n"
+            "2. SOUND LIKE A REAL PERSON: Use relaxed, natural phrasing as if you saw their tweet on your feed. Vary your tone and openings every time:\n"
+            "   - 'Hey! Saw you were searching for passes to {keyword}—check out @{seller}, pretty sure they had extras!'\n"
+            "   - 'If you’re still hunting for {keyword} seats, @{seller} mentioned having spare tickets earlier.'\n"
+            "   - 'Hey, still looking for {keyword} tix? Drop @{seller} a quick DM, they were trying to pass theirs on.'\n"
+            "   - 'Hey there! If you still need tickets for {keyword}, take a peek at @{seller}’s profile.'\n"
+            "3. INTEGRATE KEYWORD & SELLER SMOOTHLY: Naturally embed the event keyword ({keyword}) and the seller handle (@{seller}) if provided. If no seller is provided, provide friendly fan-to-fan advice without tagging anyone.\n"
+            "4. NEVER PREPEND THE BUYER'S HANDLE: Do not write '@buyer' because this is an in-reply-to comment directly under their tweet.\n"
+            "5. NO PAYMENT TALK: Never mention payment methods (PayPal, CashApp, Venmo, Zelle, Bizum, wire transfer, etc.).\n"
+            "6. FLUENT NATIVE LANGUAGE: Match the buyer's language exactly (English, Spanish, French, German, Italian, Portuguese, etc.).\n"
+            "7. LENGTH: Keep it concise, natural, and under 220 characters.\n\n"
+            "Output valid JSON with keys:\n"
+            "- 'thinking': string (your internal thoughts on intent analysis, tone, and human phrasing strategy)\n"
             "- 'is_buyer': boolean (true only if explicitly seeking tickets)\n"
-            "- 'language': detected language code (e.g. 'en', 'es', 'fr', 'de')\n"
+            "- 'language': string (e.g. 'en', 'es', 'fr', 'de')\n"
             "- 'confidence': integer (0-100; MUST be 0 if not genuinely seeking tickets)\n"
-            "- 'reasoning': concise explanation of intent verification\n"
-            "- 'suggested_reply': helpful comment (empty string if confidence is 0)."
+            "- 'reasoning': concise explanation of intent\n"
+            "- 'suggested_reply': unique, human-sounding comment (empty string if confidence is 0)."
         )
         
         seller_label = f"@{seller.author_username}" if seller.author_username else "General Ticket Marketplace"
@@ -238,8 +250,8 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
                     "contents": [{"parts": [{"text": prompt_text}]}],
                     "generationConfig": {
                         "response_mime_type": "application/json",
-                        "temperature": 0.75,
-                        "maxOutputTokens": 300
+                        "temperature": 0.8,
+                        "maxOutputTokens": 600
                     }
                 }
                 try:
@@ -249,13 +261,15 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
                         confidence = int(data.get("confidence", 75))
                         confidence = max(0, min(100, confidence))
                         detected_lang = str(data.get("language", "en"))
+                        thinking = str(data.get("thinking", "")).strip()
                         reasoning = str(data.get("reasoning", "Gemini verified ticket buyer intent."))
+                        summary_reasoning = f"{reasoning} (AI Thought: {thinking[:120]}...)" if thinking else reasoning
                         suggested_reply = str(data.get("suggested_reply", ""))
                         suggested_reply = clean_comment_text(suggested_reply, seller.author_username, keyword, buyer.author_username, lang=detected_lang)
                         
                         return MatchEvaluation(
                             confidence=confidence,
-                            reasoning=f"[Gemini {key_label} ({model}) - {detected_lang.upper()}] {reasoning}",
+                            reasoning=f"[Gemini {key_label} ({model}) - {detected_lang.upper()}] {summary_reasoning}",
                             suggested_reply=suggested_reply,
                             is_match=confidence >= 40
                         ), f"Gemini AI Active ({model} - {key_label} Key)"

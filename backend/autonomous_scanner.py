@@ -16,7 +16,7 @@ logger = logging.getLogger("autonomous_scanner")
 class AutonomousScanner:
     def __init__(self):
         self.is_running = get_setting("auto_scan_enabled", os.getenv("AUTO_SCAN_ENABLED", "true")).lower() in ("true", "1", "yes")
-        self.interval_seconds = int(get_setting("auto_scan_interval_seconds", os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "1500")))
+        self.interval_seconds = int(get_setting("auto_scan_interval_seconds", os.getenv("AUTO_SCAN_INTERVAL_SECONDS", "300")))
         self.confidence_threshold = int(get_setting("auto_post_confidence_threshold", os.getenv("AUTO_POST_CONFIDENCE_THRESHOLD", "70")))
         self._task: Optional[asyncio.Task] = None
 

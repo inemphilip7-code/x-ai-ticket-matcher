@@ -32,7 +32,7 @@ export const AutonomousControls: React.FC<Props> = ({
       const saved = localStorage.getItem('CUSTOM_SCAN_INTERVAL');
       if (saved) return parseInt(saved, 10);
     }
-    return status?.autonomous_scanner.interval_seconds || 1500;
+    return status?.autonomous_scanner.interval_seconds || 300;
   });
   const [threshold, setThreshold] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -150,12 +150,12 @@ export const AutonomousControls: React.FC<Props> = ({
               onChange={(e) => handleConfigChange(Number(e.target.value), threshold)}
               className="bg-[#141924] border border-slate-700 text-white rounded-lg px-2 py-1 font-semibold focus:outline-none"
             >
-              <option value={1500}>Every 25 mins (Default)</option>
+              <option value={300}>Every 5 mins (High frequency)</option>
+              <option value={600}>Every 10 mins</option>
               <option value={900}>Every 15 mins</option>
+              <option value={1500}>Every 25 mins</option>
               <option value={1800}>Every 30 mins</option>
-              <option value={2700}>Every 45 mins</option>
               <option value={3600}>Every 60 mins</option>
-              <option value={300}>Every 5 mins (Fast sweep)</option>
             </select>
           </div>
 

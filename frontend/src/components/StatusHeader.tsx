@@ -62,7 +62,7 @@ export const StatusHeader: React.FC<Props> = ({ status, loading, onRefresh, onOp
             <Radio className={`w-3.5 h-3.5 ${isScannerRunning ? 'text-sky-400 animate-pulse' : 'text-slate-500'}`} />
             <span>
               {isScannerRunning
-                ? `Auto-Scanner: Every ${Math.round((status?.autonomous_scanner.interval_seconds || 1500) / 60)}m`
+                ? `Auto-Scanner: Every ${Math.round((status?.autonomous_scanner.interval_seconds || 300) / 60)}m`
                 : 'Auto-Scanner Paused'}
             </span>
           </div>
