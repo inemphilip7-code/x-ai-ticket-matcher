@@ -2,7 +2,7 @@ import os
 import json
 import random
 import logging
-from typing import Tuple
+from typing import Tuple, List, Dict, Any, Optional
 from models import Tweet, MatchEvaluation
 
 logger = logging.getLogger("matcher")
