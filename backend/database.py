@@ -274,6 +274,14 @@ def remove_monitored_keyword(keyword_id: int) -> bool:
     conn.close()
     return affected > 0
 
+def clear_all_monitored_keywords() -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM monitored_keywords")
+    conn.commit()
+    conn.close()
+    return True
+
 def record_scan(keyword: str, buyer_count: int, seller_count: int, match_count: int, auto_posted_count: int):
     conn = get_connection()
     cursor = conn.cursor()

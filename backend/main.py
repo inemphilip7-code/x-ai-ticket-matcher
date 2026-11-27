@@ -52,15 +52,6 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # Only seed default keywords on very first run if never initialized
-    has_initialized = get_setting("keywords_initialized", "")
-    if not has_initialized:
-        existing_kws = get_monitored_keywords()
-        if not existing_kws:
-            for default_kw in ["Coldplay", "Oasis 2025", "Taylor Swift"]:
-                add_monitored_keyword(default_kw)
-        set_setting("keywords_initialized", "true")
-            
     log_activity("info", "X AI Ticket-Matcher Realtime Service loaded.")
     autonomous_scanner.start()
     yield
@@ -462,6 +453,11 @@ def add_keyword(req: AddKeywordRequest):
     kws = get_monitored_keywords()
     added = next((k for k in kws if k["keyword"] == kw), None)
     return MonitoredKeyword(id=added["id"], keyword=added["keyword"], is_active=bool(added["is_active"]), created_at=added["created_at"])
+
+@app.delete("/api/keywords")
+def clear_all_keywords():
+    clear_all_monitored_keywords()
+    return {"success": True, "message": "All monitored keywords removed."}
 
 @app.delete("/api/keywords/{keyword_id}")
 def delete_keyword(keyword_id: int):

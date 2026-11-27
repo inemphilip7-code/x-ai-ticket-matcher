@@ -9,6 +9,7 @@ interface Props {
   keywords: MonitoredKeyword[];
   onAddKeyword: (kw: string) => Promise<void>;
   onRemoveKeyword: (id: number) => Promise<void>;
+  onClearAllKeywords?: () => Promise<void>;
   onToggleScanner: () => Promise<void>;
   onUpdateConfig: (interval: number, threshold: number) => Promise<void>;
   onTriggerManualSweep: (kw: string) => Promise<void>;
@@ -20,6 +21,7 @@ export const AutonomousControls: React.FC<Props> = ({
   keywords,
   onAddKeyword,
   onRemoveKeyword,
+  onClearAllKeywords,
   onToggleScanner,
   onUpdateConfig,
   onTriggerManualSweep,
@@ -207,51 +209,71 @@ export const AutonomousControls: React.FC<Props> = ({
             <p className="text-xs text-slate-400">Add any concert, tour, festival, or sports match to scan automatically</p>
           </div>
 
-          {/* Add Keyword Form */}
-          <form onSubmit={handleAddSubmit} className="flex items-center gap-2 w-full sm:w-auto">
-            <input
-              type="text"
-              value={newKw}
-              onChange={(e) => setNewKw(e.target.value)}
-              placeholder="e.g. Coldplay, Oasis 25, Eras..."
-              className="px-3 py-1.5 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-            />
-            <button
-              type="submit"
-              disabled={addingKw || !newKw.trim()}
-              className="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition inline-flex items-center gap-1"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+          {/* Add Keyword Form & Clear All */}
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <form onSubmit={handleAddSubmit} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newKw}
+                onChange={(e) => setNewKw(e.target.value)}
+                placeholder="e.g. Coldplay, Drake, Eras..."
+                className="px-3 py-1.5 bg-[#090c12] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              />
+              <button
+                type="submit"
+                disabled={addingKw || !newKw.trim()}
+                className="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition inline-flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </form>
+
+            {onClearAllKeywords && keywords.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearAllKeywords}
+                title="Remove all monitored keywords"
+                className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-medium transition inline-flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear All</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Keywords chips list */}
         <div className="flex flex-wrap gap-2">
-          {keywords.map((k) => (
-            <div
-              key={k.id}
-              className="inline-flex items-center space-x-2 bg-[#141924] border border-slate-700/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 group"
-            >
-              <span>{k.keyword}</span>
-              <button
-                onClick={() => onTriggerManualSweep(k.keyword)}
-                disabled={scanning}
-                title={`Run instant scan for ${k.keyword}`}
-                className="text-[10px] text-sky-400 hover:text-sky-300 font-normal underline ml-1"
+          {keywords.length === 0 ? (
+            <p className="text-xs text-slate-500 italic py-1">
+              No keywords monitored. Type an artist or event above and click Add.
+            </p>
+          ) : (
+            keywords.map((k) => (
+              <div
+                key={k.id}
+                className="inline-flex items-center space-x-2 bg-[#141924] border border-slate-700/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-200 group"
               >
-                sweep
-              </button>
-              <button
-                onClick={() => onRemoveKeyword(k.id)}
-                title="Remove keyword from monitoring"
-                className="text-slate-500 hover:text-rose-400 transition"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
+                <span>{k.keyword}</span>
+                <button
+                  onClick={() => onTriggerManualSweep(k.keyword)}
+                  disabled={scanning}
+                  title={`Run instant scan for ${k.keyword}`}
+                  className="text-[10px] text-sky-400 hover:text-sky-300 font-normal underline ml-1"
+                >
+                  sweep
+                </button>
+                <button
+                  onClick={() => onRemoveKeyword(k.id)}
+                  title="Remove keyword from monitoring"
+                  className="text-slate-500 hover:text-rose-400 transition"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))
+          )}
           {keywords.length === 0 && (
             <span className="text-xs text-slate-500 italic">No monitored keywords yet. Add one above!</span>
           )}

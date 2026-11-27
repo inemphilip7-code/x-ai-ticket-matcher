@@ -102,11 +102,36 @@ export default function Home() {
         setMatches(matchesData);
       }
 
-      // 3. Monitored Keywords
+      // 3. Monitored Keywords with strict user persistence
       const kwRes = await fetch(`${apiUrl}/api/keywords`);
       if (kwRes.ok) {
         const kwData: MonitoredKeyword[] = await kwRes.json();
-        setKeywords(kwData);
+        if (typeof window !== 'undefined') {
+          const rawStored = localStorage.getItem('USER_STORED_KEYWORDS');
+          if (rawStored !== null) {
+            try {
+              const userKws: string[] = JSON.parse(rawStored);
+              // Clean any backend keywords that user removed/doesn't want
+              const unwanted = kwData.filter(k => !userKws.some(uk => uk.trim().toLowerCase() === k.keyword.trim().toLowerCase()));
+              if (unwanted.length > 0) {
+                for (const un of unwanted) {
+                  fetch(`${apiUrl}/api/keywords/${un.id}`, { method: 'DELETE' }).catch(() => {});
+                }
+                setKeywords(kwData.filter(k => userKws.some(uk => uk.trim().toLowerCase() === k.keyword.trim().toLowerCase())));
+              } else {
+                setKeywords(kwData);
+              }
+            } catch {
+              setKeywords(kwData);
+            }
+          } else {
+            // First visit: initialize localStorage with current keywords
+            localStorage.setItem('USER_STORED_KEYWORDS', JSON.stringify(kwData.map(k => k.keyword)));
+            setKeywords(kwData);
+          }
+        } else {
+          setKeywords(kwData);
+        }
       }
 
       // 4. Activity Logs
@@ -149,18 +174,29 @@ export default function Home() {
 
   // Handle Add Keyword
   const handleAddKeyword = async (keyword: string) => {
+    const trimmed = keyword.trim();
+    if (!trimmed) return;
     try {
       const res = await fetch(`${apiUrl}/api/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword }),
+        body: JSON.stringify({ keyword: trimmed }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'Failed to add keyword');
       }
+
+      if (typeof window !== 'undefined') {
+        const stored: string[] = JSON.parse(localStorage.getItem('USER_STORED_KEYWORDS') || '[]');
+        if (!stored.some(k => k.toLowerCase() === trimmed.toLowerCase())) {
+          stored.push(trimmed);
+          localStorage.setItem('USER_STORED_KEYWORDS', JSON.stringify(stored));
+        }
+      }
+
       await fetchData();
-      addToast('success', 'Keyword Added to Sweep', `Monitoring live X for "${keyword}"`);
+      addToast('success', 'Keyword Added to Sweep', `Monitoring live X for "${trimmed}"`);
     } catch (err: any) {
       addToast('error', 'Could not add keyword', err.message);
     }
@@ -171,10 +207,35 @@ export default function Home() {
     try {
       const res = await fetch(`${apiUrl}/api/keywords/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to remove keyword');
+
+      if (typeof window !== 'undefined') {
+        const removed = keywords.find(k => k.id === id);
+        if (removed) {
+          const stored: string[] = JSON.parse(localStorage.getItem('USER_STORED_KEYWORDS') || '[]');
+          const updated = stored.filter(k => k.toLowerCase() !== removed.keyword.toLowerCase());
+          localStorage.setItem('USER_STORED_KEYWORDS', JSON.stringify(updated));
+        }
+      }
+
       await fetchData();
       addToast('info', 'Keyword Removed', 'Stopped monitoring this keyword.');
     } catch (err: any) {
       addToast('error', 'Error removing keyword', err.message);
+    }
+  };
+
+  // Handle Clear All Keywords
+  const handleClearAllKeywords = async () => {
+    try {
+      await fetch(`${apiUrl}/api/keywords`, { method: 'DELETE' });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('USER_STORED_KEYWORDS', JSON.stringify([]));
+      }
+      setKeywords([]);
+      await fetchData();
+      addToast('info', 'All Keywords Cleared', 'You can now add only the exact keywords you want to monitor.');
+    } catch (err: any) {
+      addToast('error', 'Could not clear keywords', err.message);
     }
   };
 
@@ -297,6 +358,7 @@ export default function Home() {
           keywords={keywords}
           onAddKeyword={handleAddKeyword}
           onRemoveKeyword={handleRemoveKeyword}
+          onClearAllKeywords={handleClearAllKeywords}
           onToggleScanner={handleToggleScanner}
           onUpdateConfig={handleUpdateConfig}
           onTriggerManualSweep={handleTriggerManualSweep}
