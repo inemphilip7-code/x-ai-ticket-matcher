@@ -284,27 +284,6 @@ export default function Home() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Real-time Notice if X credentials missing */}
-        {!status?.live_x_connected && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start justify-between gap-4">
-            <div className="flex items-start space-x-3">
-              <AlertCircle className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <h4 className="text-sm font-bold text-amber-300">Live X Connection Incomplete</h4>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Connect your X Developer account to start live scanning and auto-commenting directly on buyer tweets.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-xs flex-shrink-0 transition"
-            >
-              Connect with 𝕏 / Keys
-            </button>
-          </div>
-        )}
-
         {/* ALWAYS-VISIBLE SELLER USERNAME INPUT BOX */}
         <SellerUsernameBox
           currentSeller={status?.target_seller_username || ''}

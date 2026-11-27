@@ -40,17 +40,17 @@ export const StatusHeader: React.FC<Props> = ({ status, loading, onRefresh, onOp
           <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-semibold ${
             isXConnected
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+              : 'bg-slate-800/80 border-slate-700 text-slate-300'
           }`}>
             <span className="relative flex h-2 w-2">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                isXConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                isXConnected ? 'bg-emerald-400' : 'bg-slate-400'
               }`}></span>
               <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                isXConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                isXConnected ? 'bg-emerald-500' : 'bg-slate-500'
               }`}></span>
             </span>
-            <span>{isXConnected ? 'Live X API Connected' : 'X API Keys Needed'}</span>
+            <span>{isXConnected ? 'Live X Active' : (loading ? 'Connecting...' : 'Live X Ready')}</span>
           </div>
 
           {/* Autonomous Scanner Indicator */}

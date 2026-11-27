@@ -52,10 +52,14 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    existing_kws = get_monitored_keywords()
-    if not existing_kws:
-        for default_kw in ["Coldplay", "Oasis 2025", "Taylor Swift"]:
-            add_monitored_keyword(default_kw)
+    # Only seed default keywords on very first run if never initialized
+    has_initialized = get_setting("keywords_initialized", "")
+    if not has_initialized:
+        existing_kws = get_monitored_keywords()
+        if not existing_kws:
+            for default_kw in ["Coldplay", "Oasis 2025", "Taylor Swift"]:
+                add_monitored_keyword(default_kw)
+        set_setting("keywords_initialized", "true")
             
     log_activity("info", "X AI Ticket-Matcher Realtime Service loaded.")
     autonomous_scanner.start()
@@ -209,7 +213,7 @@ def root():
     return {
         "service": "X AI Ticket-Matcher Direct Commenter",
         "live_x_connected": twitter_service.is_configured(),
-        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")),
+        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "")),
         "autonomous_scanner_active": autonomous_scanner.is_running,
         "health_endpoint": "/health"
     }
@@ -233,7 +237,7 @@ def health_check():
         "timestamp": int(time.time()),
         "scanner_active": autonomous_scanner.is_running,
         "x_connected": twitter_service.is_configured(),
-        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior"))
+        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", ""))
     }
 
 # --- 1-Click "Connect with 𝕏" Dual OAuth (OAuth 2.0 PKCE & OAuth 1.0a) ---
@@ -316,7 +320,7 @@ def get_system_status():
     ai_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     cred_status = twitter_service.get_credential_status()
     stats = get_stats()
-    seller_username = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).lstrip("@")
+    seller_username = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "")).lstrip("@")
     
     return SystemStatusResponse(
         live_x_connected=twitter_service.is_configured(),
@@ -338,7 +342,7 @@ def get_system_status():
 # --- Target Seller Username Endpoints ---
 @app.get("/api/settings/seller")
 def get_target_seller():
-    seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).lstrip("@")
+    seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "")).lstrip("@")
     return {"seller_username": seller}
 
 @app.post("/api/settings/seller")
@@ -348,7 +352,10 @@ def update_target_seller(req: SellerUsernameRequest):
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     os.environ["DEFAULT_SELLER_USERNAME"] = seller
     set_key(env_path, "DEFAULT_SELLER_USERNAME", seller)
-    log_activity("info", f"Target seller username set to @{seller}. All buyer comments will promote this seller.")
+    if seller:
+        log_activity("info", f"Target seller username set to @{seller}. All buyer comments will promote this seller.")
+    else:
+        log_activity("info", "Target seller username cleared. Matching open market ticket sellers on X.")
     return {"success": True, "seller_username": seller}
 
 @app.post("/api/scan", response_model=ScanResponse)

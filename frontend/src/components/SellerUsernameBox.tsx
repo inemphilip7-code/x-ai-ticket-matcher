@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { UserCheck, AtSign, Check, Save, Sparkles, AlertCircle } from 'lucide-react';
+import { UserCheck, AtSign, Check, Save, Sparkles, XCircle } from 'lucide-react';
 
 interface Props {
   currentSeller: string;
@@ -10,13 +10,20 @@ interface Props {
 }
 
 export const SellerUsernameBox: React.FC<Props> = ({ currentSeller, onSaveSeller, apiUrl }) => {
-  const [handle, setHandle] = useState(currentSeller || '');
+  const [handle, setHandle] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('CUSTOM_SELLER_HANDLE');
+      if (saved !== null) return saved;
+    }
+    return currentSeller || '';
+  });
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   useEffect(() => {
-    if (currentSeller) {
-      setHandle(currentSeller);
+    setHandle(currentSeller || '');
+    if (typeof window !== 'undefined' && currentSeller !== undefined) {
+      localStorage.setItem('CUSTOM_SELLER_HANDLE', currentSeller);
     }
   }, [currentSeller]);
 
@@ -28,6 +35,25 @@ export const SellerUsernameBox: React.FC<Props> = ({ currentSeller, onSaveSeller
     try {
       const clean = handle.trim().replace(/^@/, '');
       await onSaveSeller(clean);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('CUSTOM_SELLER_HANDLE', clean);
+      }
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSaveSeller('');
+      setHandle('');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('CUSTOM_SELLER_HANDLE', '');
+      }
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3000);
     } finally {
@@ -47,20 +73,20 @@ export const SellerUsernameBox: React.FC<Props> = ({ currentSeller, onSaveSeller
               <UserCheck className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-bold text-white tracking-tight">
-              Target Seller Username (Always Promoted in Comments)
+              Target Seller Account (@username) &bull; Optional
             </h3>
             {cleanHandle ? (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                Active: @{cleanHandle}
+                Active Seller: @{cleanHandle}
               </span>
             ) : (
-              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                Not Set
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                No Account Required &bull; Open Market Mode
               </span>
             )}
           </div>
           <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
-            Enter your X handle below. Whenever the bot discovers buyers looking for tickets on X, it will <strong>always recommend your seller username</strong> at a discount price!
+            Enter an 𝕏 handle to recommend in comments, or leave empty if you don&apos;t want to promote a specific account. You can change or clear this anytime dynamically.
           </p>
         </div>
 
@@ -74,7 +100,7 @@ export const SellerUsernameBox: React.FC<Props> = ({ currentSeller, onSaveSeller
               type="text"
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
-              placeholder="YourSellerHandle"
+              placeholder="e.g. MyTickets or leave blank"
               className="w-full pl-9 pr-3 py-2 bg-[#090c12] border border-slate-700 rounded-xl text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono"
             />
           </div>
@@ -96,17 +122,40 @@ export const SellerUsernameBox: React.FC<Props> = ({ currentSeller, onSaveSeller
               </>
             )}
           </button>
+
+          {cleanHandle && (
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={saving}
+              title="Clear seller handle (Open market mode)"
+              className="px-3 py-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs transition inline-flex items-center gap-1 flex-shrink-0"
+            >
+              <XCircle className="w-3.5 h-3.5 text-rose-400" />
+              <span>Clear</span>
+            </button>
+          )}
         </form>
       </div>
 
       {/* Live Preview Box */}
-      {cleanHandle && (
+      {cleanHandle ? (
         <div className="mt-3 pt-3 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center justify-between">
           <span className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Sample live comment:</span>
+            <span>Target seller comment preview:</span>
             <code className="text-slate-200 bg-[#0b0e15] px-2 py-0.5 rounded border border-slate-800 font-mono">
-              @{cleanHandle} has spare tickets for [Event] at a discounted rate, check out their post!
+              Hey! Check with @{cleanHandle}, they have tickets available.
+            </code>
+          </span>
+        </div>
+      ) : (
+        <div className="mt-3 pt-3 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+            <span>Open market mode active:</span>
+            <code className="text-slate-200 bg-[#0b0e15] px-2 py-0.5 rounded border border-slate-800 font-mono">
+              The bot matches buyers with open verified sellers found on X without promoting any fixed handle.
             </code>
           </span>
         </div>

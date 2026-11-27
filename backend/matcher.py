@@ -107,11 +107,14 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
         cleaned = cleaned.replace(f"@{buyer_username}", "").strip()
         cleaned = cleaned.lstrip(",:;- ").strip()
         
-    # Ensure seller username is ALWAYS explicitly tagged
-    if seller_username:
+    # Tag seller username if provided; if not, provide safe ticket guidance
+    if seller_username and seller_username.strip():
         clean_seller = seller_username.lstrip("@")
         if f"@{clean_seller}" not in cleaned:
             cleaned = f"Hey! Check with @{clean_seller}, they have {keyword} tickets available."
+    else:
+        if not cleaned:
+            cleaned = f"Hey! Looking for {keyword} tickets? Check verified fan-to-fan resales for verified seats."
         
     # Remove any accidental payment terms in multiple languages
     forbidden = [
@@ -121,8 +124,11 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
     ]
     for term in forbidden:
         if term in cleaned.lower():
-            templates = MULTILINGUAL_TEMPLATES.get(lang, MULTILINGUAL_TEMPLATES["en"])
-            cleaned = random.choice(templates).format(seller=seller_username.lstrip("@"), keyword=keyword)
+            if seller_username and seller_username.strip():
+                templates = MULTILINGUAL_TEMPLATES.get(lang, MULTILINGUAL_TEMPLATES["en"])
+                cleaned = random.choice(templates).format(seller=seller_username.lstrip("@"), keyword=keyword)
+            else:
+                cleaned = f"Looking for {keyword} tickets? Be sure to check verified fan exchanges for available seats."
             break
             
     if len(cleaned) > 238:
@@ -194,7 +200,7 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
             "1. STRICT BUYER INTENT: The tweet author MUST be an actual person looking to BUY, find, or get tickets for the event (e.g., 'need 2 tickets', 'who is selling', 'wtb').\n"
             "   If the tweet is just casual conversation, memes, lyrics, general excitement ('I love Coldplay'), news, or non-commercial chatter, you MUST return confidence: 0 and NO suggested reply!\n\n"
             "CRITICAL TAGGING & COMMENT RULES:\n"
-            "2. YOU MUST ALWAYS TAG THE SELLER (@seller_username) IN THE COMMENT! Example: 'Reach out to @{seller}, they have extra tickets available.'\n"
+            "2. If a specific seller username is provided, tag that seller (@seller_username)! Example: 'Reach out to @{seller}, they have extra tickets available.' If no seller username is provided, offer helpful ticket advice without asking for or requiring an account.\n"
             "3. DO NOT INCLUDE THE BUYER'S USERNAME (@buyer) because this is a direct in-reply-to comment under their tweet.\n"
             "4. NEVER MENTION PAYMENT METHODS (PayPal, CashApp, Venmo, Zelle, Bizum, wire, etc.).\n"
             "5. FLUENT NATIVE LANGUAGE: Match the buyer's language/locale (Spanish, French, German, Italian, Portuguese, English).\n"
@@ -204,13 +210,14 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
             "- 'language': detected language code (e.g. 'en', 'es', 'fr', 'de')\n"
             "- 'confidence': integer (0-100; MUST be 0 if not genuinely seeking tickets)\n"
             "- 'reasoning': concise explanation of intent verification\n"
-            "- 'suggested_reply': comment tagging @seller_username (empty string if confidence is 0)."
+            "- 'suggested_reply': helpful comment (empty string if confidence is 0)."
         )
         
+        seller_label = f"@{seller.author_username}" if seller.author_username else "General Ticket Marketplace"
         user_content = (
             f"Event Keyword: {keyword}\n\n"
             f"Buyer Tweet:\n\"{buyer.text}\"\n\n"
-            f"Seller Tweet (@{seller.author_username}):\n\"{seller.text}\""
+            f"Seller Information ({seller_label}):\n\"{seller.text}\""
         )
         
         prompt_text = f"{system_instruction}\n\n{user_content}"

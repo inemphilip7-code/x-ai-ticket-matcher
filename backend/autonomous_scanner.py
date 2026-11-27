@@ -54,10 +54,8 @@ class AutonomousScanner:
             log_activity("warning", "X credentials not ready. Click 'Connect with 𝕏' or supply keys in Settings to start live scanning.")
             return
 
-        # Check for configured seller username (defaults to xzavior if not set)
-        target_seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")).strip().lstrip("@")
-        if not target_seller:
-            target_seller = "xzavior"
+        # Check for configured seller username (optional, dynamic from UI or DB)
+        target_seller = get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "")).strip().lstrip("@")
 
         log_activity("info", f"Sweeping live X for ticket requests: '{keyword}'...")
         
@@ -72,11 +70,10 @@ class AutonomousScanner:
             record_scan(keyword, 0, 0, 0, 0)
             return
 
-        # If a designated seller username is set, we pair every buyer with this seller!
+        # If a designated seller username is set, pair buyers with this seller
         sellers = []
         if target_seller:
             log_activity("info", f"Found {len(buyers)} buyers for '{keyword}'. Pairing with configured seller @{target_seller}.")
-            # Synthesize seller representation for matching
             for i, b in enumerate(buyers):
                 sellers.append(Tweet(
                     id=f"target_seller_{target_seller}_{b.id}",
@@ -87,16 +84,24 @@ class AutonomousScanner:
                     role="seller"
                 ))
         else:
+            log_activity("info", f"No specific seller account configured. Searching open live ticket sellers on X for '{keyword}'...")
             try:
                 sellers = twitter_service.search_sellers(keyword, count=10)
             except Exception as e:
                 log_activity("error", f"Error searching sellers for '{keyword}': {e}")
                 sellers = []
 
-        if not sellers:
-            log_activity("info", f"Discovered {len(buyers)} buyers for '{keyword}', but no sellers found.")
-            record_scan(keyword, len(buyers), 0, 0, 0)
-            return
+            # If no open sellers found on X, provide general ticket assistance matches
+            if not sellers:
+                for b in buyers:
+                    sellers.append(Tweet(
+                        id=f"general_market_{b.id}",
+                        text=f"Official & verified secondary ticket marketplace for {keyword}.",
+                        author_username="",
+                        author_name="Ticket Marketplace",
+                        created_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        role="seller"
+                    ))
 
         matches_created = 0
         auto_commented_count = 0

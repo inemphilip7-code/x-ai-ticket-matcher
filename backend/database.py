@@ -86,10 +86,12 @@ def get_setting(key: str, default: str = "") -> str:
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()
     conn.close()
-    if row:
+    if row is not None:
         return row["value"]
     val = os.getenv(key.upper()) or os.getenv(f"DEFAULT_{key.upper()}")
-    return val if val is not None else default
+    if val is not None and val.strip() != "":
+        return val.strip()
+    return default
 
 def set_setting(key: str, value: str):
     conn = get_connection()

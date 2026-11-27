@@ -27,17 +27,35 @@ export const AutonomousControls: React.FC<Props> = ({
 }) => {
   const [newKw, setNewKw] = useState('');
   const [addingKw, setAddingKw] = useState(false);
-  const [intervalSec, setIntervalSec] = useState(status?.autonomous_scanner.interval_seconds || 1500);
-  const [threshold, setThreshold] = useState(status?.autonomous_scanner.confidence_threshold || 70);
+  const [intervalSec, setIntervalSec] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('CUSTOM_SCAN_INTERVAL');
+      if (saved) return parseInt(saved, 10);
+    }
+    return status?.autonomous_scanner.interval_seconds || 1500;
+  });
+  const [threshold, setThreshold] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('CUSTOM_SCAN_THRESHOLD');
+      if (saved) return parseInt(saved, 10);
+    }
+    return status?.autonomous_scanner.confidence_threshold || 70;
+  });
 
   // Dynamically sync controls with current saved settings from backend
   React.useEffect(() => {
     if (status?.autonomous_scanner) {
       if (status.autonomous_scanner.interval_seconds) {
         setIntervalSec(status.autonomous_scanner.interval_seconds);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('CUSTOM_SCAN_INTERVAL', status.autonomous_scanner.interval_seconds.toString());
+        }
       }
       if (status.autonomous_scanner.confidence_threshold) {
         setThreshold(status.autonomous_scanner.confidence_threshold);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('CUSTOM_SCAN_THRESHOLD', status.autonomous_scanner.confidence_threshold.toString());
+        }
       }
     }
   }, [status?.autonomous_scanner?.interval_seconds, status?.autonomous_scanner?.confidence_threshold]);
@@ -59,6 +77,10 @@ export const AutonomousControls: React.FC<Props> = ({
   const handleConfigChange = (newInt: number, newThresh: number) => {
     setIntervalSec(newInt);
     setThreshold(newThresh);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('CUSTOM_SCAN_INTERVAL', newInt.toString());
+      localStorage.setItem('CUSTOM_SCAN_THRESHOLD', newThresh.toString());
+    }
     onUpdateConfig(newInt, newThresh);
   };
 
