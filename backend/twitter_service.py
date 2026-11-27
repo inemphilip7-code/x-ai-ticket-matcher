@@ -715,8 +715,8 @@ class TwitterService:
         # Multilingual buyer search query strictly requiring ticket terms with the keyword
         query = (
             f'"{keyword}" '
-            f'(ticket OR tickets OR tix OR pass OR passes OR entrada OR entradas OR boleta OR boletas OR billet OR billets OR place OR places OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
-            f'(need OR looking OR want OR buy OR wtb OR spare OR extra OR anyone OR who OR busco OR compro OR cherche OR suche OR cerco OR procuro) '
+            f'(ticket OR tickets OR tix OR entrada OR entradas OR boleta OR boletas OR billet OR billets OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
+            f'("looking for" OR "need" OR "want to buy" OR "wtb" OR "anyone have" OR "who has" OR "any tickets" OR "spare" OR "busco" OR "compro" OR "cherche" OR "suche") '
             f'-RT'
         )
 
@@ -797,8 +797,8 @@ class TwitterService:
         # Multilingual seller search query strictly requiring ticket terms with the keyword
         query = (
             f'"{keyword}" '
-            f'(ticket OR tickets OR tix OR pass OR passes OR entrada OR entradas OR billet OR billets OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
-            f'("selling" OR "have extra" OR "spare" OR "wts" OR "available" OR "vendo" OR "vends" OR "verkaufe") '
+            f'(ticket OR tickets OR tix OR entrada OR entradas OR boleta OR boletas OR billet OR billets OR karte OR karten OR biglietto OR biglietti OR ingresso OR ingressos) '
+            f'("selling" OR "have extra" OR "spare tickets" OR "wts" OR "tickets available" OR "vendo" OR "vends" OR "verkaufe") '
             f'-RT'
         )
 
