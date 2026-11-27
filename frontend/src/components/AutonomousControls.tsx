@@ -2,11 +2,12 @@
 
 import React, { useState } from 'react';
 import { MonitoredKeyword, SystemStatus } from '@/types';
-import { Radio, Plus, Trash2, Play, Pause, Zap, Clock, ShieldCheck, Flame } from 'lucide-react';
+import { Radio, Plus, Trash2, Play, Pause, Zap, Clock, ShieldCheck, Flame, Sparkles } from 'lucide-react';
 
 interface Props {
   status: SystemStatus | null;
   keywords: MonitoredKeyword[];
+  apiUrl?: string;
   onAddKeyword: (kw: string) => Promise<void>;
   onRemoveKeyword: (id: number) => Promise<void>;
   onClearAllKeywords?: () => Promise<void>;
@@ -19,6 +20,7 @@ interface Props {
 export const AutonomousControls: React.FC<Props> = ({
   status,
   keywords,
+  apiUrl,
   onAddKeyword,
   onRemoveKeyword,
   onClearAllKeywords,
@@ -29,6 +31,26 @@ export const AutonomousControls: React.FC<Props> = ({
 }) => {
   const [newKw, setNewKw] = useState('');
   const [addingKw, setAddingKw] = useState(false);
+  const [trending, setTrending] = useState<{ keyword: string; category: string; language: string; summary: string }[]>([]);
+  const [loadingTrending, setLoadingTrending] = useState(false);
+
+  const fetchTrending = async () => {
+    if (!apiUrl || loadingTrending) return;
+    setLoadingTrending(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/trending`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.trending && Array.isArray(data.trending)) {
+          setTrending(data.trending);
+        }
+      }
+    } catch (e) {
+      console.error('Error discovering trending tickets on X:', e);
+    } finally {
+      setLoadingTrending(false);
+    }
+  };
   const [intervalSec, setIntervalSec] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('CUSTOM_SCAN_INTERVAL');
@@ -241,6 +263,53 @@ export const AutonomousControls: React.FC<Props> = ({
               </button>
             )}
           </div>
+        </div>
+
+        {/* Live Trending Tickets Discovery Bar */}
+        <div className="mb-4 p-3.5 bg-[#0b0f17] border border-slate-800 rounded-xl">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <Flame className="w-3.5 h-3.5 text-amber-400" />
+              <span>Live Trending High-Demand Tickets on X</span>
+              <span className="text-[10px] text-sky-400/80 font-normal border border-sky-500/20 px-1.5 py-0.5 rounded-full bg-sky-500/10">Multilingual</span>
+            </span>
+            <button
+              type="button"
+              onClick={fetchTrending}
+              disabled={loadingTrending}
+              className="text-[11px] px-3 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg font-semibold transition inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${loadingTrending ? 'animate-spin text-amber-400' : ''}`} />
+              <span>{loadingTrending ? 'Scanning X Live...' : 'Discover Trending Tickets'}</span>
+            </button>
+          </div>
+
+          {trending.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {trending.map((t, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => onAddKeyword(t.keyword)}
+                  title={`${t.summary} (Click to monitor this event)`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#131926] hover:bg-sky-500/20 text-slate-200 hover:text-sky-300 border border-slate-700/80 hover:border-sky-500/40 rounded-lg text-xs font-medium transition cursor-pointer"
+                >
+                  <span className="text-amber-400 text-xs">🔥</span>
+                  <span>{t.keyword}</span>
+                  {t.language && (
+                    <span className="text-[9px] uppercase px-1 py-0.2 bg-slate-800 text-slate-400 rounded font-mono">
+                      {t.language}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-sky-400 font-semibold ml-0.5">+ Monitor</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500 italic">
+              Click &ldquo;Discover Trending Tickets&rdquo; to analyze live X for concerts, sports matches, and festivals urgently requested by fans in any language.
+            </p>
+          )}
         </div>
 
         {/* Keywords chips list */}

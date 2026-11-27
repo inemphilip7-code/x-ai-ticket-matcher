@@ -189,6 +189,17 @@ class AutonomousScanner:
                 monitored = get_monitored_keywords()
                 active_keywords = [k["keyword"] for k in monitored if k.get("is_active", 1)]
                 
+                # If no manual keywords are set, automatically discover live trending events on X
+                if not active_keywords:
+                    log_activity("info", "No custom keywords set. Scanning live X to discover trending ticket events...")
+                    demand_tweets = twitter_service.search_live_ticket_demand(count=15)
+                    if demand_tweets:
+                        from matcher import extract_trending_events_from_tweets
+                        events = extract_trending_events_from_tweets(demand_tweets)
+                        active_keywords = [e["keyword"] for e in events if e.get("keyword")][:4]
+                        if active_keywords:
+                            log_activity("info", f"Discovered live trending ticket events on X: {', '.join(active_keywords)}")
+
                 for kw in active_keywords:
                     if not self.is_running:
                         break

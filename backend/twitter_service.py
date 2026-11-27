@@ -708,6 +708,38 @@ class TwitterService:
         }
 
     # --- Live Search with Targeted Intent Phrases ---
+    def search_live_ticket_demand(self, count: int = 15) -> List[Dict[str, Any]]:
+        """
+        Search live X for real-time buyer demand tweets across multiple languages
+        to discover trending concerts, festivals, or sports events.
+        """
+        query = (
+            '("need tickets" OR "looking for tickets" OR "wtb tickets" OR "anyone selling tickets" OR '
+            '"busco entradas" OR "compro boletas" OR "cherche billets" OR "procuro ingressos" OR '
+            '"suche karten" OR "cerco biglietti") -RT'
+        )
+        if self._graphql_client:
+            try:
+                raw_tweets = self._graphql_client.search_tweets(query, count=count)
+                if raw_tweets:
+                    return raw_tweets
+            except Exception as e:
+                logger.warning(f"GraphQL search_live_ticket_demand error: {e}")
+
+        if self._search_client:
+            try:
+                resp = self._search_client.search_recent_tweets(
+                    query=query,
+                    max_results=min(max(count, 10), 100),
+                    tweet_fields=["created_at", "author_id", "lang"]
+                )
+                if resp.data:
+                    return [{"id": str(t.id), "text": t.text, "created_at": str(t.created_at)} for t in resp.data]
+            except Exception as e:
+                logger.warning(f"Tweepy search_live_ticket_demand error: {e}")
+
+        return []
+
     def search_buyers(self, keyword: str, count: int = 10) -> List[Tweet]:
         if not self._client and not self._graphql_client:
             raise RuntimeError("X client not configured. Connect your X account or add auth_token + ct0 cookies in Settings.")

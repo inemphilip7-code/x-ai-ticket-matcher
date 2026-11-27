@@ -113,12 +113,45 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
             if clean_seller.lower() in cleaned.lower():
                 cleaned = re.sub(rf"(?<!@)\b{re.escape(clean_seller)}\b", f"@{clean_seller}", cleaned, flags=re.IGNORECASE)
             elif cleaned:
-                cleaned = f"{cleaned.rstrip('.')} — check with @{clean_seller}!"
+                if lang == "es":
+                    cleaned = f"{cleaned.rstrip('.')} — ¡escríbele a @{clean_seller}!"
+                elif lang == "fr":
+                    cleaned = f"{cleaned.rstrip('.')} — regarde avec @{clean_seller} !"
+                elif lang == "de":
+                    cleaned = f"{cleaned.rstrip('.')} — schau mal bei @{clean_seller} vorbei!"
+                elif lang == "pt":
+                    cleaned = f"{cleaned.rstrip('.')} — fala com @{clean_seller}!"
+                elif lang == "it":
+                    cleaned = f"{cleaned.rstrip('.')} — prova a sentire @{clean_seller}!"
+                else:
+                    cleaned = f"{cleaned.rstrip('.')} — check with @{clean_seller}!"
             else:
-                cleaned = f"Hey, if you're looking for {keyword} tickets, check with @{clean_seller}!"
+                if lang == "es":
+                    cleaned = f"¡Hola! Si buscas entradas para {keyword}, ¡escríbele a @{clean_seller}!"
+                elif lang == "fr":
+                    cleaned = f"Salut ! Si tu cherches des places pour {keyword}, contacte @{clean_seller} !"
+                elif lang == "de":
+                    cleaned = f"Hey! Falls du noch Tickets für {keyword} suchst, frag mal @{clean_seller}!"
+                elif lang == "pt":
+                    cleaned = f"Oi! Se estiver procurando ingressos para {keyword}, fala com @{clean_seller}!"
+                elif lang == "it":
+                    cleaned = f"Ciao! Se stai cercando biglietti per {keyword}, chiedi a @{clean_seller}!"
+                else:
+                    cleaned = f"Hey, if you're looking for {keyword} tickets, check with @{clean_seller}!"
     else:
         if not cleaned:
-            cleaned = f"Hey! Looking for {keyword} tickets? Be sure to check verified fan exchanges for available seats."
+            if lang == "es":
+                cleaned = f"¡Hola! Si buscas entradas para {keyword}, revisa las plataformas oficiales de reventa para conseguir boletos seguros."
+            elif lang == "fr":
+                cleaned = f"Salut ! Si tu cherches des billets pour {keyword}, jette un œil aux bourses d'échange officielles."
+            elif lang == "de":
+                cleaned = f"Hey! Falls du Tickets für {keyword} suchst, schau am besten auf verifizierten Fan-Börsen vorbei."
+            elif lang == "pt":
+                cleaned = f"Oi! Se estiver procurando ingressos para {keyword}, veja nos canais oficiais de revenda."
+            elif lang == "it":
+                cleaned = f"Ciao! Se cerchi biglietti per {keyword}, controlla le piattaforme di rivendita ufficiali."
+            else:
+                cleaned = f"Hey! Looking for {keyword} tickets? Be sure to check verified fan exchanges for available seats."
         
     # Remove any accidental payment terms in multiple languages
     forbidden = [
@@ -130,9 +163,25 @@ def clean_comment_text(text: str, seller_username: str, keyword: str, buyer_user
         if term in cleaned.lower():
             if seller_username and seller_username.strip():
                 clean_seller = seller_username.lstrip("@")
-                cleaned = f"Hey! Still searching for {keyword} tickets? Check with @{clean_seller}, they had spare passes available."
+                if lang == "es":
+                    cleaned = f"¡Hola! ¿Aún buscas entradas para {keyword}? Escríbele a @{clean_seller}, tenía pases disponibles."
+                elif lang == "fr":
+                    cleaned = f"Salut ! Tu cherches toujours des places pour {keyword} ? Vois avec @{clean_seller}, il en avait en trop."
+                elif lang == "de":
+                    cleaned = f"Hey! Suchst du noch Tickets für {keyword}? Frag mal @{clean_seller}, da gab es noch welche."
+                elif lang == "pt":
+                    cleaned = f"Oi! Ainda procurando ingressos para {keyword}? Fala com @{clean_seller}, ele tinha sobrando."
+                elif lang == "it":
+                    cleaned = f"Ciao! Cerchi ancora biglietti per {keyword}? Prova a sentire @{clean_seller}, ne aveva qualcuno."
+                else:
+                    cleaned = f"Hey! Still searching for {keyword} tickets? Check with @{clean_seller}, they had spare passes available."
             else:
-                cleaned = f"Still looking for {keyword} tickets? Fan resale platforms usually have seats pop up closer to the date."
+                if lang == "es":
+                    cleaned = f"¿Aún buscas entradas para {keyword}? Suelen aparecer boletos de fans verificados más cerca de la fecha."
+                elif lang == "fr":
+                    cleaned = f"Tu cherches toujours des billets pour {keyword} ? Des places de revente officielle apparaissent souvent avant le jour J."
+                else:
+                    cleaned = f"Still looking for {keyword} tickets? Fan resale platforms usually have seats pop up closer to the date."
             break
             
     if len(cleaned) > 238:
@@ -214,7 +263,13 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
             "3. INTEGRATE KEYWORD & SELLER SMOOTHLY: Naturally embed the event keyword ({keyword}) and the seller handle (@{seller}) if provided. If no seller is provided, provide friendly fan-to-fan advice without tagging anyone.\n"
             "4. NEVER PREPEND THE BUYER'S HANDLE: Do not write '@buyer' because this is an in-reply-to comment directly under their tweet.\n"
             "5. NO PAYMENT TALK: Never mention payment methods (PayPal, CashApp, Venmo, Zelle, Bizum, wire transfer, etc.).\n"
-            "6. FLUENT NATIVE LANGUAGE: Match the buyer's language exactly (English, Spanish, French, German, Italian, Portuguese, etc.).\n"
+            "6. FLUENT NATIVE LANGUAGE (STRICT REQUIREMENT): You MUST write 'suggested_reply' in the EXACT language of the buyer tweet:\n"
+            "   - If Spanish ('busco entradas', 'alguien vende'), you MUST reply in natural, authentic Spanish (e.g. '¡Hola! Vi que buscabas entradas para {keyword}—fíjate en el perfil de @{seller}, creo que tenía de sobra.').\n"
+            "   - If French ('cherche places', 'qui vend'), you MUST reply in natural French (e.g. 'Salut ! Si tu cherches toujours des places pour {keyword}, regarde avec @{seller}, il en avait en trop.').\n"
+            "   - If German ('suche tickets', 'brauche karten'), you MUST reply in natural German (e.g. 'Hey! Falls du noch Karten für {keyword} suchst, schau mal bei @{seller} vorbei.').\n"
+            "   - If Portuguese ('procuro ingressos'), you MUST reply in natural Portuguese (e.g. 'Oi! Se ainda estiver procurando ingressos para {keyword}, fala com o @{seller}!').\n"
+            "   - If Italian ('cerco biglietti'), you MUST reply in natural Italian (e.g. 'Ciao! Se cerchi ancora biglietti per {keyword}, senti @{seller}!').\n"
+            "   - NEVER reply in English if the buyer tweeted in another language! Match their dialect, language, and slang perfectly.\n"
             "7. LENGTH: Keep it concise, natural, and under 220 characters.\n\n"
             "Output valid JSON with keys:\n"
             "- 'thinking': string (your internal thoughts on intent analysis, tone, and human phrasing strategy)\n"
@@ -286,3 +341,60 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
         fallback = evaluate_pair_rule_based(buyer, seller, keyword)
         fallback.reasoning = f"[Gemini Fallback: {str(e)[:40]}] " + fallback.reasoning
         return fallback, "Rule-Based Fallback"
+
+
+def extract_trending_events_from_tweets(demand_tweets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Analyze real-time ticket demand tweets from X using Gemini AI to extract
+    trending concert, festival, or sports event keywords currently in high demand.
+    """
+    if not demand_tweets:
+        return []
+
+    import requests
+
+    primary_key = get_setting("gemini_api_key", os.getenv("GEMINI_API_KEY", "")).strip()
+    fallback_key = get_setting("gemini_api_key_fallback", os.getenv("GEMINI_API_KEY_FALLBACK", "")).strip()
+    keys_to_try = [k for k in [primary_key, fallback_key] if k]
+    if not keys_to_try:
+        return []
+
+    configured_model = get_setting("gemini_model", os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")).strip()
+
+    sample_texts = [f"Tweet {i+1}: \"{t.get('text', '')}\"" for i, t in enumerate(demand_tweets[:12])]
+    tweets_block = "\n".join(sample_texts)
+
+    prompt = (
+        "You are an AI Ticket Trend Hunter. Analyze these real-time buyer demand tweets from X.\n"
+        "Extract up to 6 of the most specific, high-demand events (concerts, tours, artists, sports matches, festivals) that people are urgently seeking tickets for right now.\n"
+        "Extract the actual clean event or artist name (e.g. 'Moto GP Valencia', 'Liverpool vs Everton', 'Chelsea', 'Fetty Wap').\n\n"
+        f"Real-Time Demand Tweets on X:\n{tweets_block}\n\n"
+        "Respond ONLY with valid JSON array of objects:\n"
+        "[\n"
+        "  {\"keyword\": \"Clean Event or Artist Name\", \"category\": \"concert|sports|festival\", \"language\": \"en|es|fr|de|pt\", \"summary\": \"Brief note on demand\"}\n"
+        "]"
+    )
+
+    models_to_try = [configured_model, "gemini-3.5-flash-lite", "gemini-flash-latest"]
+    for api_key in keys_to_try:
+        for model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"response_mime_type": "application/json"}
+            }
+            try:
+                res = requests.post(url, json=payload, timeout=12)
+                if res.status_code == 200:
+                    text_out = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    # Strip markdown codeblocks if model included them
+                    if text_out.startswith("```"):
+                        text_out = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_out, flags=re.MULTILINE).strip()
+                    data = json.loads(text_out)
+                    if isinstance(data, list):
+                        return data
+            except Exception as e:
+                logger.warning(f"Error in extract_trending_events_from_tweets ({model}): {e}")
+                continue
+
+    return []

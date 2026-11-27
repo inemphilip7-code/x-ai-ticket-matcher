@@ -356,6 +356,7 @@ export default function Home() {
         <AutonomousControls
           status={status}
           keywords={keywords}
+          apiUrl={apiUrl}
           onAddKeyword={handleAddKeyword}
           onRemoveKeyword={handleRemoveKeyword}
           onClearAllKeywords={handleClearAllKeywords}

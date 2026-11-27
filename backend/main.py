@@ -466,6 +466,31 @@ def delete_keyword(keyword_id: int):
         raise HTTPException(status_code=404, detail="Keyword not found.")
     return {"success": True}
 
+# Trending Ticket Discovery
+_cached_trending: List[Dict[str, Any]] = []
+_trending_cache_time: float = 0
+
+@app.get("/api/trending")
+def get_trending_tickets():
+    global _cached_trending, _trending_cache_time
+    now = time.time()
+    if _cached_trending and (now - _trending_cache_time < 120):
+        return {"trending": _cached_trending, "cached": True}
+
+    try:
+        demand_tweets = twitter_service.search_live_ticket_demand(count=15)
+        if demand_tweets:
+            from matcher import extract_trending_events_from_tweets
+            events = extract_trending_events_from_tweets(demand_tweets)
+            if events:
+                _cached_trending = events
+                _trending_cache_time = now
+                return {"trending": events, "cached": False}
+    except Exception as e:
+        logger.warning(f"Error discovering trending tickets on X: {e}")
+
+    return {"trending": _cached_trending or [], "cached": False}
+
 # Activity Logs
 @app.get("/api/logs", response_model=List[ActivityLogRecord])
 def fetch_activity_logs(limit: int = 50):
