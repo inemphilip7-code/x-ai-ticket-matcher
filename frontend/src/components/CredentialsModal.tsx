@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SystemStatus } from '@/types';
 import { X, Key, ShieldCheck, Check, AlertCircle, Save, ExternalLink, HelpCircle, Sparkles, Radio } from 'lucide-react';
 
@@ -10,11 +10,48 @@ interface Props {
   status: SystemStatus | null;
   onSaved: () => void;
   apiUrl: string;
+  onUpdateApiUrl?: (url: string) => void;
 }
 
-export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onSaved, apiUrl }) => {
-  const [activeTab, setActiveTab] = useState<'oauth2' | 'oauth1' | 'direct' | 'gemini' | 'deploy'>('oauth2');
+export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onSaved, apiUrl, onUpdateApiUrl }) => {
+  const [activeTab, setActiveTab] = useState<'backend' | 'oauth2' | 'oauth1' | 'direct' | 'gemini' | 'deploy'>('backend');
   
+  // Backend URL state
+  const [customUrl, setCustomUrl] = useState(apiUrl);
+  const [testingUrl, setTestingUrl] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    setCustomUrl(apiUrl);
+  }, [apiUrl]);
+
+  const handleTestBackend = async () => {
+    setTestingUrl(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`${customUrl.trim().replace(/\/$/, '')}/health`);
+      if (res.ok) {
+        const data = await res.json();
+        setTestResult({ success: true, msg: `Connected! Target seller: @${data.target_seller || 'none'}, Scanner: ${data.scanner_active ? 'Active' : 'Idle'}` });
+      } else {
+        setTestResult({ success: false, msg: `HTTP ${res.status}: Failed to reach health endpoint.` });
+      }
+    } catch (err: any) {
+      setTestResult({ success: false, msg: `Error: ${err.message}` });
+    } finally {
+      setTestingUrl(false);
+    }
+  };
+
+  const handleSaveBackend = async () => {
+    const formatted = customUrl.trim().replace(/\/$/, '');
+    if (onUpdateApiUrl) {
+      onUpdateApiUrl(formatted);
+    }
+    setMsg({ type: 'success', text: `Switched backend server to ${formatted}` });
+    setTimeout(() => onSaved(), 500);
+  };
+
   // Credentials state
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
@@ -135,11 +172,22 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
         </div>
 
         {/* Step Navigation Tabs */}
-        <div className="flex border-b border-slate-800 mt-4 text-xs font-semibold">
+        <div className="flex border-b border-slate-800 mt-4 text-xs font-semibold overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveTab('backend')}
+            className={`pb-2.5 px-3 border-b-2 transition whitespace-nowrap ${
+              activeTab === 'backend'
+                ? 'border-cyan-500 text-cyan-400'
+                : 'border-transparent text-slate-400 hover:text-white'
+            }`}
+          >
+            🌐 Backend Server
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('oauth2')}
-            className={`pb-2.5 px-3 border-b-2 transition ${
+            className={`pb-2.5 px-3 border-b-2 transition whitespace-nowrap ${
               activeTab === 'oauth2'
                 ? 'border-sky-500 text-sky-400'
                 : 'border-transparent text-slate-400 hover:text-white'
@@ -199,6 +247,89 @@ export const CredentialsModal: React.FC<Props> = ({ isOpen, onClose, status, onS
           }`}>
             {msg.type === 'success' ? <Check className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
             <span>{msg.text}</span>
+          </div>
+        )}
+
+        {/* TAB 0: Backend Server Endpoint */}
+        {activeTab === 'backend' && (
+          <div className="mt-4 space-y-4 text-xs">
+            <div className="p-4 rounded-xl bg-[#10141e] border border-cyan-500/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-white text-sm">Backend API Server Endpoint</h4>
+                  <p className="text-slate-400 text-xs mt-0.5">
+                    Connect this dashboard to your live Render backend or local development server.
+                  </p>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${
+                  status?.live_x_connected ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {status ? 'CONNECTED' : 'DISCONNECTED'}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold block">Server URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customUrl}
+                    onChange={(e) => setCustomUrl(e.target.value)}
+                    placeholder="https://x-ticket-matcher-api-o8ym.onrender.com"
+                    className="flex-1 bg-[#090c12] border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleTestBackend}
+                    disabled={testingUrl}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-semibold transition"
+                  >
+                    {testingUrl ? 'Testing...' : 'Ping Test'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveBackend}
+                    className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-lg font-bold transition"
+                  >
+                    Save &amp; Switch
+                  </button>
+                </div>
+              </div>
+
+              {testResult && (
+                <div className={`p-2.5 rounded-lg border flex items-center gap-2 text-xs font-mono ${
+                  testResult.success ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                }`}>
+                  {testResult.success ? <Check className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                  <span>{testResult.msg}</span>
+                </div>
+              )}
+
+              <div className="pt-2 flex flex-wrap gap-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = 'https://x-ticket-matcher-api-o8ym.onrender.com';
+                    setCustomUrl(u);
+                    if (onUpdateApiUrl) onUpdateApiUrl(u);
+                  }}
+                  className="px-2.5 py-1 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 border border-sky-500/20 font-mono transition"
+                >
+                  Use Live Render (x-ticket-matcher-api-o8ym.onrender.com)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = 'http://localhost:8000';
+                    setCustomUrl(u);
+                    if (onUpdateApiUrl) onUpdateApiUrl(u);
+                  }}
+                  className="px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 font-mono transition"
+                >
+                  Use Localhost (http://localhost:8000)
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

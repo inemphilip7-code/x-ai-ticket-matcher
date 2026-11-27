@@ -11,9 +11,31 @@ import { ToastContainer, ToastMessage } from '@/components/Toast';
 import { MatchRecord, SystemStatus, MonitoredKeyword, ActivityLog } from '@/types';
 import { Layers, Sparkles, CheckCircle2, Clock, Filter, Radio, AlertCircle } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const DEFAULT_REMOTE_API = 'https://x-ticket-matcher-api-o8ym.onrender.com';
+
+function resolveInitialApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('CUSTOM_API_URL');
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/$/, '');
+    }
+  }
+  const envUrl = process.env.NEXT_PUBLIC_API_URL || '';
+  // If envUrl is pointing to the old suspended Render url, migrate automatically
+  if (envUrl.includes('x-ticket-matcher-api.onrender.com')) {
+    return DEFAULT_REMOTE_API;
+  }
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return DEFAULT_REMOTE_API;
+  }
+  return 'http://localhost:8000';
+}
 
 export default function Home() {
+  const [apiUrl, setApiUrl] = useState<string>(resolveInitialApiUrl);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [matches, setMatches] = useState<MatchRecord[]>([]);
   const [keywords, setKeywords] = useState<MonitoredKeyword[]>([]);
@@ -23,6 +45,18 @@ export default function Home() {
   const [filter, setFilter] = useState<'all' | 'auto_posted' | 'high_confidence'>('all');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const handleUpdateApiUrl = (newUrl: string) => {
+    const formatted = newUrl.trim().replace(/\/$/, '');
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('CUSTOM_API_URL', formatted);
+    }
+    setApiUrl(formatted);
+  };
+
+  useEffect(() => {
+    setApiUrl(resolveInitialApiUrl());
+  }, []);
 
   // Add toast helper
   const addToast = (type: 'success' | 'error' | 'info', title: string, description?: string) => {
@@ -55,28 +89,28 @@ export default function Home() {
   const fetchData = useCallback(async () => {
     try {
       // 1. Status
-      const statusRes = await fetch(`${API_BASE}/api/status`);
+      const statusRes = await fetch(`${apiUrl}/api/status`);
       if (statusRes.ok) {
         const statusData: SystemStatus = await statusRes.json();
         setStatus(statusData);
       }
 
       // 2. Matches
-      const matchesRes = await fetch(`${API_BASE}/api/matches?limit=100`);
+      const matchesRes = await fetch(`${apiUrl}/api/matches?limit=100`);
       if (matchesRes.ok) {
         const matchesData: MatchRecord[] = await matchesRes.json();
         setMatches(matchesData);
       }
 
       // 3. Monitored Keywords
-      const kwRes = await fetch(`${API_BASE}/api/keywords`);
+      const kwRes = await fetch(`${apiUrl}/api/keywords`);
       if (kwRes.ok) {
         const kwData: MonitoredKeyword[] = await kwRes.json();
         setKeywords(kwData);
       }
 
       // 4. Activity Logs
-      const logsRes = await fetch(`${API_BASE}/api/logs?limit=40`);
+      const logsRes = await fetch(`${apiUrl}/api/logs?limit=40`);
       if (logsRes.ok) {
         const logsData: ActivityLog[] = await logsRes.json();
         setLogs(logsData);
@@ -84,7 +118,7 @@ export default function Home() {
     } catch (err: any) {
       console.error('Error fetching system data:', err);
     }
-  }, []);
+  }, [apiUrl]);
 
   useEffect(() => {
     fetchData();
@@ -95,7 +129,7 @@ export default function Home() {
   // Handle Save Target Seller
   const handleSaveSeller = async (seller: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/settings/seller`, {
+      const res = await fetch(`${apiUrl}/api/settings/seller`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seller_username: seller }),
@@ -116,7 +150,7 @@ export default function Home() {
   // Handle Add Keyword
   const handleAddKeyword = async (keyword: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/keywords`, {
+      const res = await fetch(`${apiUrl}/api/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyword }),
@@ -135,7 +169,7 @@ export default function Home() {
   // Handle Remove Keyword
   const handleRemoveKeyword = async (id: number) => {
     try {
-      const res = await fetch(`${API_BASE}/api/keywords/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${apiUrl}/api/keywords/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to remove keyword');
       await fetchData();
       addToast('info', 'Keyword Removed', 'Stopped monitoring this keyword.');
@@ -147,7 +181,7 @@ export default function Home() {
   // Handle Toggle Autonomous Scanner
   const handleToggleScanner = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/scanner/toggle`, { method: 'POST' });
+      const res = await fetch(`${apiUrl}/api/scanner/toggle`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to toggle scanner');
       const data = await res.json();
       await fetchData();
@@ -164,7 +198,7 @@ export default function Home() {
   // Handle Update Scanner Config
   const handleUpdateConfig = async (interval: number, threshold: number) => {
     try {
-      const res = await fetch(`${API_BASE}/api/scanner/config?interval=${interval}&threshold=${threshold}`, {
+      const res = await fetch(`${apiUrl}/api/scanner/config?interval=${interval}&threshold=${threshold}`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to update config');
@@ -180,7 +214,7 @@ export default function Home() {
   const handleTriggerManualSweep = async (keyword: string) => {
     setScanning(true);
     try {
-      const res = await fetch(`${API_BASE}/api/scan`, {
+      const res = await fetch(`${apiUrl}/api/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyword, count: 10 }),
@@ -201,7 +235,7 @@ export default function Home() {
   // Handle Manual Post / Retry
   const handlePost = async (matchId: number, text: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/matches/${matchId}/post`, {
+      const res = await fetch(`${apiUrl}/api/matches/${matchId}/post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reply_text: text }),
@@ -222,7 +256,7 @@ export default function Home() {
   // Handle Delete Match
   const handleDelete = async (matchId: number) => {
     try {
-      const res = await fetch(`${API_BASE}/api/matches/${matchId}`, { method: 'DELETE' });
+      const res = await fetch(`${apiUrl}/api/matches/${matchId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete match');
       await fetchData();
       addToast('info', 'Match Removed', `Candidate #${matchId} deleted.`);
@@ -275,7 +309,7 @@ export default function Home() {
         <SellerUsernameBox
           currentSeller={status?.target_seller_username || ''}
           onSaveSeller={handleSaveSeller}
-          apiUrl={API_BASE}
+          apiUrl={apiUrl}
         />
 
         {/* Autonomous Scanner & Keyword Controls */}
@@ -383,7 +417,8 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
         status={status}
         onSaved={fetchData}
-        apiUrl={API_BASE}
+        apiUrl={apiUrl}
+        onUpdateApiUrl={handleUpdateApiUrl}
       />
 
       {/* Floating Notifications */}
