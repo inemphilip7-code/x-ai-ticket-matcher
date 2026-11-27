@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 import logging
 import json
@@ -466,6 +468,15 @@ class TwitterService:
         self.bearer_token = os.getenv("TWITTER_BEARER_TOKEN", "").strip()
         self.auth_token = os.getenv("TWITTER_AUTH_TOKEN", "").strip()
         self.ct0 = os.getenv("TWITTER_CT0", "").strip()
+        if not self.auth_token or not self.ct0:
+            try:
+                from database import get_setting
+                if not self.auth_token:
+                    self.auth_token = get_setting("twitter_auth_token", "").strip()
+                if not self.ct0:
+                    self.ct0 = get_setting("twitter_ct0", "").strip()
+            except Exception:
+                pass
 
         # Smart Auto-Detection: If user pasted OAuth 2.0 Client ID into API Key field
         self._normalize_credentials()

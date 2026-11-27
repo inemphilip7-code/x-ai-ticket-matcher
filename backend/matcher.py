@@ -2,7 +2,9 @@ import os
 import json
 import random
 import logging
+import re
 from typing import Tuple, List, Dict, Any, Optional
+from database import get_setting
 from models import Tweet, MatchEvaluation
 
 logger = logging.getLogger("matcher")
@@ -310,7 +312,7 @@ def evaluate_pair(buyer: Tweet, seller: Tweet, keyword: str) -> Tuple[MatchEvalu
                     }
                 }
                 try:
-                    res = requests.post(url, json=payload, timeout=12)
+                    res = requests.post(url, json=payload, timeout=12, verify=False)
                     if res.status_code == 200:
                         data = json.loads(res.json()["candidates"][0]["content"]["parts"][0]["text"])
                         confidence = int(data.get("confidence", 75))
@@ -384,7 +386,7 @@ def extract_trending_events_from_tweets(demand_tweets: List[Dict[str, Any]]) -> 
                 "generationConfig": {"response_mime_type": "application/json"}
             }
             try:
-                res = requests.post(url, json=payload, timeout=12)
+                res = requests.post(url, json=payload, timeout=12, verify=False)
                 if res.status_code == 200:
                     text_out = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     # Strip markdown codeblocks if model included them
