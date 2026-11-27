@@ -209,7 +209,7 @@ def root():
     return {
         "service": "X AI Ticket-Matcher Direct Commenter",
         "live_x_connected": twitter_service.is_configured(),
-        "target_seller": get_setting("seller_username", ""),
+        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior")),
         "autonomous_scanner_active": autonomous_scanner.is_running,
         "health_endpoint": "/health"
     }
@@ -233,7 +233,7 @@ def health_check():
         "timestamp": int(time.time()),
         "scanner_active": autonomous_scanner.is_running,
         "x_connected": twitter_service.is_configured(),
-        "target_seller": get_setting("seller_username", "")
+        "target_seller": get_setting("seller_username", os.getenv("DEFAULT_SELLER_USERNAME", "xzavior"))
     }
 
 # --- 1-Click "Connect with 𝕏" Dual OAuth (OAuth 2.0 PKCE & OAuth 1.0a) ---

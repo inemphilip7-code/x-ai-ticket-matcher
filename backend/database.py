@@ -88,7 +88,8 @@ def get_setting(key: str, default: str = "") -> str:
     conn.close()
     if row:
         return row["value"]
-    return os.getenv(key.upper(), default)
+    val = os.getenv(key.upper()) or os.getenv(f"DEFAULT_{key.upper()}")
+    return val if val is not None else default
 
 def set_setting(key: str, value: str):
     conn = get_connection()
